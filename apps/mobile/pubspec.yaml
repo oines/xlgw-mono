@@ -1,0 +1,30 @@
+name: spiritual_harbor
+description: 心灵港湾校园支持
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ">=3.9.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.5.0
+  crypto: ^3.0.6
+  path_provider: ^2.1.5
+  intl: ^0.20.2
+  web: ^1.1.1
+  webview_flutter: ^4.13.0
+  shared_preferences: ^2.5.3
+  flutter_secure_storage: ^10.0.0
+  uuid: ^4.5.1
+  url_launcher: ^6.3.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/companion/
+    - assets/companion/thumbnails/

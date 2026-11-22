@@ -1,0 +1,15 @@
+include: package:flutter_lints/flutter.yaml
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+  errors:
+    # The Flutter 3.50 SDK still ships its integrated Material widgets.
+    deprecated_member_use: ignore
+linter:
+  rules:
+    curly_braces_in_flow_control_structures: false
+    prefer_interpolation_to_compose_strings: false
+    use_null_aware_elements: false

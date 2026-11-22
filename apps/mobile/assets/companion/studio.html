@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>心灵港湾 · 伙伴预览</title>
+<style>
+:root{color-scheme:light;--paper:#f5f6f3;--white:#fff;--ink:#202a27;--quiet:#61706a;--border:#e3e7e2;--accent:#28665c}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,"PingFang SC","Noto Sans CJK SC",sans-serif}
+main{width:min(100% - 40px,960px);margin:32px auto 40px}
+h1{font-size:clamp(1.6rem,5vw,2.35rem);margin:0 0 18px;line-height:1.22}
+.stage{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:20px}
+iframe{border:1px solid var(--border);border-radius:22px;width:100%;height:440px;display:block;background:#eeeee7}
+aside{background:var(--white);border:1px solid var(--border);padding:16px;border-radius:18px}
+h2{font-size:15px;margin:0 0 8px}
+section+section{margin-top:20px}
+.options{display:flex;gap:7px;flex-wrap:wrap}
+button{font:inherit;font-size:14px;background:var(--paper);color:var(--ink);border:1px solid var(--border);border-radius:10px;padding:9px 11px;min-height:44px;cursor:pointer}
+button[aria-pressed=true]{border-color:var(--accent);color:var(--accent);background:#e7f0e9}
+p{font-size:14px;line-height:1.65;color:var(--quiet);margin:14px 2px}
+a{color:var(--accent)}
+@media(max-width:680px){main{margin-top:24px}.stage{grid-template-columns:1fr}iframe{height:320px}}
+</style></head><body><main>
+<h1>挑一位陪伴伙伴</h1>
+<div class="stage">
+<iframe title="3D 伙伴，可旋转和缩放" src="index.html"></iframe>
+<aside>
+<section><h2>形象</h2><div class="options" id="pets">
+<button type="button" data-pet="clear" aria-pressed="true">团团猫</button>
+<button type="button" data-pet="soft" aria-pressed="false">暖暖狐</button>
+<button type="button" data-pet="poised" aria-pressed="false">咕咕鸮</button>
+</div></section>
+<section><h2>预览动作</h2><div class="options">
+<button type="button" data-state="greeting">打招呼</button>
+<button type="button" data-state="listening">倾听</button>
+<button type="button" data-state="reply">回应</button>
+<button type="button" data-state="idle">待机</button>
+</div></section>
+<section><h2>外观</h2><div class="options">
+<button type="button" id="pin" aria-pressed="false">加上领结</button>
+<button type="button" id="theme" aria-pressed="false">深色预览</button>
+<button type="button" id="reset">回到正面</button>
+</div></section>
+</aside>
+</div>
+<p>拖动角色可以旋转，滚动或双指操作可以缩放。素材来自 <a href="https://vuena.itch.io/blocky-pets-free">Vuena 的 CC0 免费样本</a>。</p>
+</main>
+<script>
+const stage=document.querySelector('iframe');
+const tell=(type,value)=>stage.contentWindow?.postMessage({type,[type]:value},location.origin);
+let preset='clear',accessory=false,dark=false;
+const apply=()=>tell('config',{preset,outfit:accessory?1:0});
+document.querySelectorAll('[data-pet]').forEach(btn=>btn.addEventListener('click',()=>{
+ preset=btn.dataset.pet;apply();
+ document.querySelectorAll('[data-pet]').forEach(p=>p.setAttribute('aria-pressed',String(p===btn)));
+}));
+document.querySelectorAll('[data-state]').forEach(btn=>btn.addEventListener('click',()=>tell('state',btn.dataset.state)));
+document.querySelector('#pin').addEventListener('click',event=>{
+ accessory=!accessory;event.currentTarget.setAttribute('aria-pressed',String(accessory));apply();
+});
+document.querySelector('#theme').addEventListener('click',event=>{
+ dark=!dark;event.currentTarget.setAttribute('aria-pressed',String(dark));tell('theme',dark?'dark':'light');
+});
+document.querySelector('#reset').addEventListener('click',()=>tell('reset',true));
+window.addEventListener('message',event=>{
+ if(event.origin===location.origin&&event.source===stage.contentWindow&&event.data?.type==='ready'){
+  apply();tell('theme',dark?'dark':'light');
+ }
+});
+</script></body></html>
