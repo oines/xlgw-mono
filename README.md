@@ -49,9 +49,12 @@ PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testf
 | Secret | `APP_STORE_CONNECT_KEY_ID` | App Store Connect 团队 API Key 的 Key ID |
 | Secret | `APP_STORE_CONNECT_ISSUER_ID` | 该 API Key 所属团队的 Issuer ID |
 | Secret | `APP_STORE_CONNECT_KEY_P8_BASE64` | 该 API Key 下载的 `.p8` 文件，使用 Base64 编码 |
+| Secret | `APPLE_DISTRIBUTION_P12_BASE64` | Apple Distribution 证书及私钥导出的 `.p12` 文件，使用 Base64 编码 |
+| Secret | `APPLE_DISTRIBUTION_P12_PASSWORD` | 导出上述 `.p12` 文件时设置的密码 |
+| Secret | `APPLE_APP_STORE_PROFILE_BASE64` | 与上述证书配套的 App Store Connect 描述文件，使用 Base64 编码 |
 | Secret | `HARBOR_API_URL` | iPhone 可访问的后端 URL |
 
-Apple 团队 API Key 需要能为 `dev.oines.xlgw` 签名并上传。若使用 HTTP，构建会按后端主机生成对应的 iOS 网络例外。版本从 `apps/mobile/pubspec.yaml` 读取，构建号由 Actions 运行编号和尝试次数生成。
+构建使用专用的 Apple Distribution 证书和 `dev.oines.xlgw` 的 App Store Connect 描述文件签名，团队 API Key 用于上传。证书更新时需要同时更新与之配套的描述文件。若使用 HTTP，构建会按后端主机生成对应的 iOS 网络例外。版本从 `apps/mobile/pubspec.yaml` 读取，构建号由 Actions 运行编号和尝试次数生成。
 
 本地可在 `apps/mobile` 运行 `flutter pub get --enforce-lockfile` 和 `flutter test --no-pub`。在仓库根目录运行 `actionlint` 校验工作流。若本地 actionlint 仍不识别 GitHub Actions 的 `queue` 字段，可用 `actionlint -ignore 'unexpected key "queue" for "concurrency" section'` 校验其余配置。
 
