@@ -1,0 +1,109 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && github.repository == 'oines/xlgw-mono'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: android-release
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.50.0
+        run: |
+          git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = ab2912035e160d9cad6306df307576da6128ebdb
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter --suppress-analytics pub get --enforce-lockfile
+
+      - name: Build signed universal APK
+        id: apk
+        working-directory: apps/mobile
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          HARBOR_API_URL: ${{ secrets.HARBOR_API_URL }}
+        run: |
+          : "${ANDROID_KEYSTORE_BASE64:?Set ANDROID_KEYSTORE_BASE64 in android-release}"
+          : "${HARBOR_API_URL:?Set HARBOR_API_URL in android-release}"
+          python3 - android/app/src/main/res/xml/harbor_network_security.xml <<'PY'
+          import base64
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from urllib.parse import urlsplit
+
+          api_url = os.environ["HARBOR_API_URL"]
+          url = urlsplit(api_url)
+          if url.scheme not in {"http", "https"} or not url.hostname or url.username is not None:
+              sys.exit("HARBOR_API_URL must be an HTTP or HTTPS URL without credentials.")
+
+          encoded_define = base64.b64encode(f"HARBOR_API_URL={api_url}".encode()).decode()
+          for value in (api_url, url.hostname, encoded_define):
+              print(f"::add-mask::{value.replace('%', '%25')}")
+
+          if url.scheme == "http":
+              config = ET.parse(sys.argv[1])
+              cleartext = config.find("./domain-config[@cleartextTrafficPermitted='true']")
+              if not any(domain.text == url.hostname for domain in cleartext.findall("domain")):
+                  ET.SubElement(cleartext, "domain", includeSubdomains="false").text = url.hostname
+              config.write(sys.argv[1], encoding="utf-8", xml_declaration=True)
+          PY
+
+          keystore="$HOME/.android/debug.keystore"
+          mkdir -p "$(dirname "$keystore")"
+          trap 'rm -f -- "$keystore"' EXIT
+          (umask 077; printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore")
+          unset ANDROID_KEYSTORE_BASE64
+
+          version_code=$((GITHUB_RUN_NUMBER + 2))
+          version="$(awk '/^version:/ { split($2, parts, "+"); print parts[1] }' pubspec.yaml)"
+          flutter --suppress-analytics build apk --release --no-pub \
+            --build-number="$version_code" --dart-define="HARBOR_API_URL=$HARBOR_API_URL"
+          tag="android-v$version-b$version_code"
+          asset="$RUNNER_TEMP/xlgw-$tag.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$asset"
+          printf 'tag=%s\nasset=%s\n' "$tag" "$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.apk.outputs.tag }}
+          ASSET: ${{ steps.apk.outputs.asset }}
+        run: |
+          tag_commit="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -n 1 | cut -f 1)"
+          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Tag $TAG belongs to a different commit."
+            exit 1
+          fi
+          if assets="$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null)"; then
+            if ! grep -Fxq -- "${ASSET##*/}" <<< "$assets"; then
+              gh release upload "$TAG" "$ASSET"
+            fi
+          else
+            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" \
+              --title "心灵港湾 Android ${TAG#android-v}" \
+              --notes "Android 联网安装包。使用时需要能访问校园后端。"
+          fi
