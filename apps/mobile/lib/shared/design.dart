@@ -4,6 +4,54 @@ import 'package:intl/intl.dart';
 const harborInk = Color(0xff202a27);
 const harborGreen = Color(0xff28665c);
 
+ThemeData studentTheme(ThemeData base) {
+  if (base.brightness == Brightness.dark) return base;
+  const canvas = Color(0xfff6f4ef);
+  final colors = base.colorScheme.copyWith(
+    primary: const Color(0xff476951),
+    primaryContainer: const Color(0xffe6efe8),
+    onPrimaryContainer: const Color(0xff315540),
+    surfaceContainerLow: canvas,
+    surfaceContainer: const Color(0xffeeeee6),
+    onSurface: const Color(0xff2f3a34),
+    onSurfaceVariant: const Color(0xff627269),
+  );
+  return base.copyWith(
+    colorScheme: colors,
+    scaffoldBackgroundColor: canvas,
+    appBarTheme: base.appBarTheme.copyWith(backgroundColor: canvas),
+    filledButtonTheme: FilledButtonThemeData(
+      style: base.filledButtonTheme.style?.copyWith(
+        shape: const WidgetStatePropertyAll(StadiumBorder()),
+      ),
+    ),
+    navigationBarTheme: base.navigationBarTheme.copyWith(
+      height: 61,
+      indicatorColor: colors.primaryContainer,
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => TextStyle(
+          color: states.contains(WidgetState.selected)
+              ? colors.primary
+              : colors.onSurfaceVariant,
+          fontSize: 11,
+        ),
+      ),
+    ),
+  );
+}
+
+Color studentTint(BuildContext context, int index) {
+  final colors = Theme.of(context).colorScheme;
+  if (colors.brightness == Brightness.dark) return colors.surfaceContainer;
+  const tints = [
+    Color(0xffe6efe8),
+    Color(0xffe9f0f5),
+    Color(0xfffbf2e3),
+    Color(0xffefeaf2),
+  ];
+  return tints[index % tints.length];
+}
+
 ThemeData harborTheme(Brightness mode) {
   final dark = mode == Brightness.dark;
   final canvas = dark ? const Color(0xff171f1c) : const Color(0xfff5f6f3);

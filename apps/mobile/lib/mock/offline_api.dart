@@ -29,6 +29,8 @@ class OfflineHarborApi extends HarborApi {
   final _social = MockSocial();
   Future<SharedPreferences>? _opening;
   Future<void> _writes = Future.value();
+  Future<void> _wellbeingQueue = Future.value();
+  static const _wellbeingKey = 'harbor.offline.wellbeing.v1';
   late Data _state;
 
   Future<SharedPreferences> _open() => _opening ??= _read();
@@ -104,6 +106,16 @@ class OfflineHarborApi extends HarborApi {
     final prefs = await _open();
     final uri = Uri.parse(path);
     final payload = body ?? <String, dynamic>{};
+    if (uri.pathSegments.firstOrNull == 'wellbeing') {
+      final operation = _wellbeingQueue.then(
+        (_) => _wellbeing(uri, method, payload),
+      );
+      _wellbeingQueue = operation.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {},
+      );
+      return operation;
+    }
     final local = _profile(uri, method, payload);
     final result =
         local ??
@@ -136,6 +148,74 @@ class OfflineHarborApi extends HarborApi {
     }
     if (method != 'GET') await _save(prefs);
     return data(jsonDecode(jsonEncode(result)));
+  }
+
+  Future<Data> _wellbeing(Uri uri, String method, Data body) async {
+    final saved = await HarborApi.storage.read(key: _wellbeingKey);
+    final records = saved == null
+        ? <String, dynamic>{}
+        : data(jsonDecode(saved));
+    final journal = data(records['journal']);
+    final sleep = data(records['sleep']);
+    List<Data> entries(Data type) =>
+        type.values.map(data).toList()
+          ..sort((a, b) => text(b, 'day').compareTo(text(a, 'day')));
+    if (uri.path == '/wellbeing/export' && method == 'GET') {
+      return {'journal': entries(journal), 'sleep': entries(sleep)};
+    }
+    if (uri.path == '/wellbeing/data' && method == 'DELETE') {
+      await HarborApi.storage.delete(key: _wellbeingKey);
+      return {};
+    }
+    final parts = uri.pathSegments;
+    final kind = parts.elementAtOrNull(1);
+    final table = switch (kind) {
+      'journal' => journal,
+      'sleep' => sleep,
+      _ => throw const ApiError(404, 'offline_route', '记录入口不存在。'),
+    };
+    if (parts.length == 2 && method == 'GET') {
+      final limit = int.tryParse(uri.queryParameters['limit'] ?? '') ?? 100;
+      final offset = int.tryParse(uri.queryParameters['offset'] ?? '') ?? 0;
+      final list = entries(table);
+      return {
+        'items': list
+            .skip(offset.clamp(0, list.length))
+            .take(limit.clamp(1, 100))
+            .toList(),
+      };
+    }
+    final day = parts.elementAtOrNull(2) ?? '';
+    final parsed = DateTime.tryParse(day);
+    if (parsed == null || parsed.toIso8601String().substring(0, 10) != day) {
+      throw const ApiError(400, 'invalid_day', '日期格式有误。');
+    }
+    if (method == 'DELETE' && kind == 'journal') {
+      table.remove(day);
+    } else if (method == 'PUT') {
+      if (kind == 'journal') {
+        final mood = text(body, 'mood');
+        final note = text(body, 'note').trim();
+        if (!['calm', 'happy', 'tired', 'sad', 'anxious'].contains(mood) ||
+            note.runes.length > 500) {
+          throw const ApiError(400, 'invalid_journal', '请选择心情，日记不超过 500 字。');
+        }
+        table[day] = {'day': day, 'mood': mood, 'note': note};
+      } else {
+        final minutes = body['minutes_after_midnight'];
+        if (minutes is! int || minutes < 0 || minutes > 1439) {
+          throw const ApiError(400, 'invalid_sleep', '请输入有效的入睡时间。');
+        }
+        table[day] = {'day': day, 'minutes_after_midnight': minutes};
+      }
+    } else {
+      throw const ApiError(404, 'offline_route', '记录入口不存在。');
+    }
+    await HarborApi.storage.write(
+      key: _wellbeingKey,
+      value: jsonEncode({'journal': journal, 'sleep': sleep}),
+    );
+    return data(table[day]);
   }
 
   @override

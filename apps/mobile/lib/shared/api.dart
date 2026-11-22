@@ -6,6 +6,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import 'api_client.dart' if (dart.library.io) 'api_client_io.dart';
+
 typedef Data = Map<String, dynamic>;
 
 const harborOffline = bool.fromEnvironment('HARBOR_OFFLINE');
@@ -29,7 +31,7 @@ class ApiError implements Exception {
 
 class HarborApi {
   HarborApi({http.Client? client, String? base})
-    : client = client ?? http.Client(),
+    : client = client ?? createHarborClient(),
       base = base ?? _base();
   final http.Client client;
   final String base;
@@ -98,7 +100,20 @@ class HarborApi {
       final value = utf8.decode(response.bodyBytes);
       if (response.statusCode >= 400) throw error(response.statusCode, value);
       return value.isEmpty ? {} : data(jsonDecode(value));
-    } on http.ClientException {
+    } on http.ClientException catch (error) {
+      final cause = error.toString().toLowerCase();
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.iOS &&
+          (cause.contains('permission denied') ||
+              cause.contains('operation not permitted') ||
+              cause.contains('local network denied') ||
+              cause.contains('local network prohibited'))) {
+        throw const ApiError(
+          0,
+          'local_network',
+          '无法连接校园服务。请在「设置 → 隐私与安全性 → 本地网络」开启「心灵港湾」，再重试。',
+        );
+      }
       throw const ApiError(0, 'network', '连接不上心灵港湾，请检查网络后重试');
     } on TimeoutException {
       throw const ApiError(0, 'timeout', '连接超时，请稍后重试');

@@ -46,7 +46,7 @@ void main() {
   });
 
   testWidgets(
-    'community uses the selected sort and updates resonance from the server',
+    'community filters topics and updates resonance from the server',
     (tester) async {
       final sorts = <String?>[];
       final toggles = <bool>[];
@@ -57,7 +57,7 @@ void main() {
             final sort = request.url.queryParameters['sort'];
             sorts.add(sort);
             return jsonResponse({
-              'items': [post(body: sort == 'hot' ? '这是一条热门帖子' : '最新的校园散步')],
+              'items': [post(body: '最新的校园散步')],
             });
           }
           if (request.url.path == '/api/v1/posts/post-1/resonance' &&
@@ -66,7 +66,7 @@ void main() {
             toggles.add(active);
             return jsonResponse(
               post(
-                body: '这是一条热门帖子',
+                body: '最新的校园散步',
                 resonated: active,
                 resonances: active ? 7 : 6,
               ),
@@ -84,10 +84,13 @@ void main() {
       expect(find.text('最新的校园散步'), findsOneWidget);
       expect(find.text('平静'), findsOneWidget);
 
-      await tester.tap(find.text('热门'));
+      await tester.tap(find.text('焦虑'));
       await tester.pumpAndSettle();
-      expect(sorts, ['latest', 'hot']);
-      expect(find.text('这是一条热门帖子'), findsOneWidget);
+      expect(find.text('这个主题下暂时没有帖子'), findsOneWidget);
+      await tester.tap(find.text('推荐'));
+      await tester.pumpAndSettle();
+      expect(sorts, ['latest']);
+      expect(find.text('最新的校园散步'), findsOneWidget);
 
       await tester.tap(find.text('共鸣 0'));
       await tester.pumpAndSettle();
@@ -100,6 +103,54 @@ void main() {
       expect(find.byIcon(Icons.favorite_border), findsOneWidget);
     },
   );
+
+  testWidgets('plaza keeps anonymous posts and shows only I relate', (
+    tester,
+  ) async {
+    final requests = <String>[];
+    final plazaPost = {
+      ...post(body: '此刻想慢一点', resonances: 17),
+      'mode': 'resonance',
+      'author_name': '示例署名',
+      'comments': 9,
+    };
+    final api = HarborApi(
+      base: 'https://harbor.test',
+      client: MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        if (request.method == 'GET' && request.url.path == '/api/v1/posts') {
+          expect(request.url.queryParameters, {'mode': 'resonance'});
+          return jsonResponse({
+            'items': [plazaPost],
+          });
+        }
+        if (request.method == 'PUT' &&
+            request.url.path == '/api/v1/posts/post-1/resonance') {
+          expect(data(jsonDecode(request.body)), {'active': true});
+          return jsonResponse({...plazaPost, 'resonated': true});
+        }
+        throw StateError('Unexpected request ${request.method} ${request.url}');
+      }),
+    );
+    addTearDown(api.client.close);
+
+    await tester.pumpWidget(
+      host(CommunityPage(api, student, resonanceOnly: true)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('匿名同学'), findsOneWidget);
+    expect(find.text('示例署名'), findsNothing);
+    expect(find.text('共鸣 17'), findsNothing);
+    expect(find.text('9 条回应'), findsNothing);
+    expect(find.byTooltip('我的帖子'), findsNothing);
+    await tester.tap(find.text('此刻想慢一点'));
+    await tester.pumpAndSettle();
+    expect(requests, ['GET /api/v1/posts']);
+    await tester.tap(find.text('我也是'));
+    await tester.pumpAndSettle();
+    expect(requests.last, 'PUT /api/v1/posts/post-1/resonance');
+    expect(find.byIcon(Icons.favorite), findsOneWidget);
+  });
 
   testWidgets('removed community post has an explicit unavailable state', (
     tester,

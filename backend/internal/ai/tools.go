@@ -15,21 +15,6 @@ const companionPrompt = `你是心灵港湾面向大学生的 AI 陪伴助手，
 
 const crisisReply = "听起来你正在经历很难熬的一刻。如果你现在有伤害自己或他人的危险，请先远离可能造成伤害的物品，尽量到有人在的地方，并立即联系当地紧急服务或身边可信赖的人。你也可以打开人工求助，查看学校的联系渠道。提交求助需要你确认，学校的处理进度会在页面上显示。"
 
-func riskSignal(text string) bool {
-	// A conservative escalation hint, not a diagnosis. This local check covers
-	// explicit expressions of immediacy and never notifies a third party.
-	text = strings.ToLower(strings.Join(strings.Fields(text), ""))
-	signals := []string{"我不想活了", "我想自杀", "我要自杀", "我准备自杀", "我想结束生命",
-		"我想结束自己的生命", "我要伤害自己", "我要杀了他", "我要杀了她",
-		"suicideplan", "iwanttokillmyself", "i'mgoingtokillmyself", "iwanttoendmylife"}
-	for _, marker := range signals {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Service) tools(owner string) []core.Tool {
 	return []core.Tool{core.ToolFunc{
 		Spec: core.ToolDefinition{

@@ -10,6 +10,14 @@
 - GET /resources?kind=support|article|activity|announcement → [{id,kind,title,body,url,published,created_at}]。
 - GET /avatars/catalog → {version,presets,moods}。GET /avatars/me → {revision,config}，PUT /avatars/me {revision,config} → 同形，409 为保存冲突。
 
+## 情绪日记与睡眠记录
+
+- 需要登录，所有记录仅当前账号可访问。`day` 使用用户记录的日历日期 `YYYY-MM-DD`。
+- GET /wellbeing/journal → {items:[{day,mood,note}]}。PUT /wellbeing/journal/{day} {mood,note?} 新建或替换当日记录，返回 {day,mood,note}。mood 为 calm/happy/tired/sad/anxious。note 可留空，最长 500 字。DELETE /wellbeing/journal/{day} → 204，可重复提交。
+- GET /wellbeing/sleep → {items:[{day,minutes_after_midnight}]}。PUT /wellbeing/sleep/{day} {minutes_after_midnight} 新建或替换当日记录，返回 {day,minutes_after_midnight}。分钟数为 0–1439 的整数。
+- 两个列表均按日期降序，支持 limit 和 offset。GET /wellbeing/export → {journal:[{day,mood,note}],sleep:[{day,minutes_after_midnight}]}，导出全部本人日记及睡眠记录。
+- DELETE /wellbeing/data → 204。用户确认后调用，原子清除本人所有日记及睡眠记录，可重复提交。
+
 ## 校内支持与预约
 
 - GET /staff?role=teacher|peer&mode=online|onsite&date=YYYY-MM-DD，GET /staff/{id}，GET/PATCH /staff/me。对象 {id,nickname,avatar_url,role,bio,modes,location,supervisor_id,supervisor_name,active,next_slot}，编辑支持 {bio,modes,location}。
@@ -35,10 +43,14 @@
 
 ## 社区与反馈
 
-- GET /posts?sort=latest|hot|resonance&author_id=，GET /posts/{id}，POST /posts {body,tags}，PATCH /posts/{id} {body,tags}，DELETE /posts/{id}。对象 {id,author_id,author_name,author_avatar,body,tags,resonances,comments,resonated,created_at,updated_at,edited}。
-- GET /posts/{id}/comments，POST /posts/{id}/comments {body,parent_id?}，DELETE /comments/{id}。评论 {id,post_id,parent_id,author_id,author_name,author_avatar,body,created_at}。GET /comments?scope=mine。
+- GET /posts?mode=named|anonymous|resonance&sort=latest|hot|resonance&author_id=，GET /posts/{id}，POST /posts {body,tags?,mode?}，PATCH /posts/{id} {body,tags?,mode?}，DELETE /posts/{id}。对象 {id,mode,is_owner,author_id,author_name,author_avatar,body,tags,resonances,comments,resonated,created_at,updated_at,edited,review_pending}。
+- 列表未传 mode 时包含实名和匿名帖子。创建未传 mode 时按实名处理，编辑时沿用原方式。使用 author_id 查询他人的帖子时只返回实名帖子。本人可查询自己的匿名帖子。
+- anonymous 和 resonance 的 author_id、author_avatar 为 null，author_name 为「匿名同学」。resonance 正文最多 60 字，标签可省略，列表只按时间排序，resonances、comments 为 null。其余帖子仍需 1–3 个标签。
+- 帖子支持通用情绪标签以及「睡眠」「关系」「树洞」。POST /posts/{id}/block → 204，为本人屏蔽单条匿名或共鸣帖子。DELETE /posts/{id}/block → 204，恢复可见。帖子屏蔽不写入用户屏蔽名单。
+- GET /posts/{id}/comments，POST /posts/{id}/comments {body,parent_id?}，DELETE /comments/{id}。评论 {id,post_id,parent_id,mode,is_owner,author_id,author_name,author_avatar,body,created_at,review_pending}。匿名帖子下的评论匿名展示，resonance 帖子的评论读取和新增均返回 404。GET /comments?scope=mine 可查看本人的评论。
 - PUT /posts/{id}/resonance {active} → post。GET /people/{id} → {id,nickname,avatar_url,blocked}。
-- POST /reports {target_type:'post'|'comment'|'message',target_id,reason,note?}。GET /admin/reports?status=，POST /admin/reports/{id}/resolve {action:'dismiss'|'remove'|'restrict',result}。对象 {id,target_type,target_id,reporter_id,reporter_name,author_id,author_name,reason,note,evidence,status,result,created_at}。
+- 帖子及评论命中本地明确风险词组时进入现有人工审核队列。待审内容在社区中仅作者可见，返回 review_pending=true。
+- POST /reports {target_type:'post'|'comment'|'message',target_id,reason,note?}。GET /admin/reports?status=，POST /admin/reports/{id}/resolve {action:'dismiss'|'remove'|'restrict',result}。对象 {id,target_type,target_id,source,reporter_id,reporter_name,author_id,author_name,reason,note,evidence,status,result,created_at}。source 为 user 或 safety，safety 的 reporter_id 为 null。
 - GET /feedback、POST /feedback {category,body,contact?}。GET /admin/feedback?status=、PATCH /admin/feedback/{id} {status,reply?}。记录 {id,student_id,student_name,category,body,contact,status,reply,created_at}，状态 pending/processing/resolved。
 
 ## 运营
@@ -49,7 +61,8 @@
 
 ## AI
 
-- GET/POST /ai/conversations，GET/PATCH/DELETE /ai/conversations/{id}；POST/PATCH {title?}。列表项 {id,title,created_at,updated_at}。GET /ai/conversations/{id}/messages → {items:[{id,role,text,input_id?,created_at}],run?}。
+- GET/POST /ai/conversations，GET/PATCH/DELETE /ai/conversations/{id}；POST/PATCH {title?}。列表项 {id,title,created_at,updated_at,expires_at?}。GET /ai/conversations/{id}/messages → {items:[{id,role,text,input_id?,created_at}],run?}。
+- 新建个人 AI 会话在创建 7 天后到期，到期后不接收新的消息或重试。后台在会话空闲时清理原始对话。已有会话无 expires_at，仍可由本人管理。服务归档中明确分享的副本保留，源会话到期清理后 conversation_id 为 null，授权与撤回规则继续适用。
 - POST /ai/conversations/{id}/inputs {id,text}，GET /ai/runs/{id}，POST /ai/runs/{id}/cancel，POST /ai/inputs/{id}/retry {id}。run = {id,input_id,conversation_id,status,error?}，详见 AI 实现。
 - GET /ai/runs/{id}/events → SSE snapshot|delta|state，data {run,text?,attempt_id?,reset?}。GET /ai/quota → {daily_limit,used,remaining,per_minute,enabled,reset_at}。
 - GET/POST /admin/ai/connections，PATCH /admin/ai/connections/{id}，POST /admin/ai/connections/{id}/test。{name,provider?,protocol:'openai-completions',base_url,api_key?,models:[string],enabled}。返回省略 api_key，附上 {id,has_key,last_test_status,last_test_at,last_test_error}。

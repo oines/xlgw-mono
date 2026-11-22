@@ -110,6 +110,7 @@ func New(db *pgxpool.Pool, cfg Config) (*Service, error) {
 		cancel()
 		return nil, err
 	}
+	s.bg.Go(s.expireConversations)
 	return s, nil
 }
 

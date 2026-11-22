@@ -44,12 +44,21 @@ class MockSocial {
   static bool _blockedPair(Data state, Object? user, Object? other) =>
       _blocks(state, user, other) || _blocks(state, other, user);
 
-  static Data _byAuthor(Data state, Data row) {
+  static String _mode(Data row) => text(row, 'mode', 'named');
+
+  static Data _byAuthor(
+    Data state,
+    Data row, {
+    String? viewer,
+    bool anonymous = false,
+  }) {
     final author = text(row, 'author_id');
     return {
       ...row,
-      'author_name': _name(state, author),
-      'author_avatar': author == _demo
+      if (anonymous) 'author_id': null,
+      'is_owner': author == viewer,
+      'author_name': anonymous ? '匿名同学' : _name(state, author),
+      'author_avatar': !anonymous && author == _demo
           ? text(data(state['profile']), 'avatar_url')
           : '',
     };
@@ -57,17 +66,24 @@ class MockSocial {
 
   static Data _post(Data state, String user, Data row) {
     final resonances = (row['resonance_users'] as List?) ?? const [];
-    final publicRow = _byAuthor(state, row)
-      ..remove('resonance_users')
-      ..remove('seed_resonances');
+    final mode = _mode(row);
+    final publicRow =
+        _byAuthor(state, row, viewer: user, anonymous: mode != 'named')
+          ..remove('resonance_users')
+          ..remove('seed_resonances');
     return {
       ...publicRow,
+      'mode': mode,
       'resonated': resonances.contains(user),
-      'resonances': (row['seed_resonances'] as int? ?? 0) + resonances.length,
-      'comments': _rows(
-        state,
-        'comments',
-      ).where((comment) => comment['post_id'] == row['id']).length,
+      'resonances': mode == 'resonance'
+          ? null
+          : (row['seed_resonances'] as int? ?? 0) + resonances.length,
+      'comments': mode == 'resonance'
+          ? null
+          : _rows(
+              state,
+              'comments',
+            ).where((comment) => comment['post_id'] == row['id']).length,
     };
   }
 
@@ -321,7 +337,15 @@ class MockSocial {
         final mine = rows.where((row) => row['author_id'] == userId);
         if (method == 'GET' && id.isEmpty) {
           return _items(
-            (mine.toList()..sort(_latest)).map((row) => _byAuthor(state, row)),
+            (mine.toList()..sort(_latest)).map((row) {
+              final post = _find(_rows(state, 'posts'), text(row, 'post_id'));
+              return _byAuthor(
+                state,
+                row,
+                viewer: userId,
+                anonymous: post != null && _mode(post) != 'named',
+              );
+            }),
           );
         }
         if (method != 'DELETE' && method != 'PATCH') return null;
@@ -413,19 +437,48 @@ class MockSocial {
     Data body,
   ) {
     final rows = _rows(state, 'posts');
+    final postBlocks = _rows(state, 'post_blocks');
+    if (action == 'block' && (method == 'POST' || method == 'DELETE')) {
+      _require(rows, id);
+      postBlocks.removeWhere(
+        (row) => row['owner_id'] == user && row['id'] == id,
+      );
+      if (method == 'POST') postBlocks.add({'owner_id': user, 'id': id});
+      return {};
+    }
     final visible = rows.where(
-      (row) => !_blocks(state, user, row['author_id']),
+      (row) =>
+          !_blocks(state, user, row['author_id']) &&
+          !postBlocks.any(
+            (entry) => entry['owner_id'] == user && entry['id'] == row['id'],
+          ),
     );
     if (id.isEmpty && method == 'GET') {
       final author = query['author_id'];
       final sort = query['sort'];
+      final mode = query['mode'];
       final items = visible
-          .where((row) => author == null || row['author_id'] == author)
+          .where(
+            (row) =>
+                mode == null ? _mode(row) != 'resonance' : _mode(row) == mode,
+          )
+          .where(
+            (row) =>
+                author == null ||
+                row['author_id'] == author &&
+                    (author == user || _mode(row) == 'named'),
+          )
+          .where(
+            (row) =>
+                query['tag'] == null ||
+                (row['tags'] as List).contains(query['tag']),
+          )
           .map((row) => _post(state, user, row))
           .toList();
       int score(Data row) => switch (sort) {
-        'hot' => (row['resonances'] as int) + (row['comments'] as int) * 2,
-        'resonance' => row['resonances'] as int,
+        'hot' =>
+          (row['resonances'] as int? ?? 0) + (row['comments'] as int? ?? 0) * 2,
+        'resonance' => row['resonances'] as int? ?? 0,
         _ => 0,
       };
       items.sort((a, b) {
@@ -435,11 +488,6 @@ class MockSocial {
       return _items(items);
     }
     if (action.isEmpty && (id.isEmpty ? method == 'POST' : method == 'PATCH')) {
-      final content = _body(body, 2000);
-      final tags = (body['tags'] as List?)?.whereType<String>().toList() ?? [];
-      if (tags.isEmpty || tags.length > 3) {
-        throw const ApiError(400, 'invalid_input', '请选择 1–3 个情绪标签');
-      }
       final row = id.isEmpty
           ? <String, dynamic>{
               'id': newID(),
@@ -447,8 +495,18 @@ class MockSocial {
               'created_at': _at(),
             }
           : _require(visible.where((row) => row['author_id'] == user), id);
+      final mode = id.isEmpty ? text(body, 'mode', 'named') : _mode(row);
+      if (!['named', 'anonymous', 'resonance'].contains(mode)) {
+        throw const ApiError(400, 'invalid_input', '发帖类型不正确');
+      }
+      final content = _body(body, mode == 'resonance' ? 60 : 2000);
+      final tags = (body['tags'] as List?)?.whereType<String>().toList() ?? [];
+      if (mode != 'resonance' && tags.isEmpty || tags.length > 3) {
+        throw const ApiError(400, 'invalid_input', '请选择 1–3 个情绪标签');
+      }
       row.addAll({
         'body': content,
+        'mode': mode,
         'tags': tags,
         'edited': id.isNotEmpty,
         'updated_at': _at(),
@@ -459,13 +517,21 @@ class MockSocial {
     final row = _require(visible, id);
     final comments = _rows(state, 'comments');
     if (action == 'comments') {
+      if (_mode(row) == 'resonance') {
+        throw const ApiError(404, 'not_found', '情绪广场只开放共鸣');
+      }
+      final anonymous = _mode(row) == 'anonymous';
       final onPost = comments.where(
         (comment) =>
             comment['post_id'] == id &&
             !_blocks(state, user, comment['author_id']),
       );
       if (method == 'GET')
-        return _items(onPost.map((row) => _byAuthor(state, row)));
+        return _items(
+          onPost.map(
+            (row) => _byAuthor(state, row, viewer: user, anonymous: anonymous),
+          ),
+        );
       if (method == 'POST') {
         final content = _body(body, 500);
         final parentId = text(body, 'parent_id');
@@ -489,7 +555,7 @@ class MockSocial {
             targetId: id,
           );
         }
-        return _byAuthor(state, comment);
+        return _byAuthor(state, comment, viewer: user, anonymous: anonymous);
       }
     }
     if (action == 'resonance' && method == 'PUT') {

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	core "github.com/oines/astral-core"
+	"github.com/oines/xlgw-mono/backend/internal/safety"
 )
 
 type Action struct {
@@ -202,7 +203,8 @@ func (s *Service) admit(ctx context.Context, c Conversation, input, text, retryI
 	defer tx.Rollback(context.Background())
 
 	var deleting bool
-	if err = tx.QueryRow(ctx, "SELECT session_id,deleting FROM app.ai_conversations WHERE id=$1 AND user_id=$2 FOR UPDATE", c.ID, c.owner).
+	if err = tx.QueryRow(ctx, `SELECT session_id,deleting FROM app.ai_conversations
+		WHERE id=$1 AND user_id=$2 AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE`, c.ID, c.owner).
 		Scan(&c.sessionID, &deleting); err != nil || deleting {
 		return Run{}, notFound()
 	}
@@ -277,7 +279,7 @@ func (s *Service) admit(ctx context.Context, c Conversation, input, text, retryI
 	}
 	var risk bool
 	if retryID == "" {
-		risk = riskSignal(text)
+		risk = safety.ExplicitSignal(text)
 		_, err = tx.Exec(ctx, `INSERT INTO app.ai_inputs(id,conversation_id,digest,body) VALUES($1,$2,$3,$4)`, input, c.ID, digestText(text), text)
 		if err != nil {
 			return Run{}, storeError(err)

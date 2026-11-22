@@ -11,6 +11,10 @@ import 'features/care.dart';
 import 'features/community.dart';
 import 'features/messages.dart';
 import 'features/profile.dart';
+import 'features/student_home.dart';
+import 'features/student_profile.dart';
+import 'features/student_school.dart';
+import 'features/wellbeing.dart';
 import 'mock/offline_api.dart';
 import 'shared/api.dart';
 import 'shared/design.dart';
@@ -18,6 +22,7 @@ import 'shared/design.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN');
+  await initializeWellbeingAudio();
   runApp(HarborApp());
 }
 
@@ -150,7 +155,13 @@ class _HarborState extends State<HarborApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) refreshIdentity();
+    if (state != AppLifecycleState.resumed) return;
+    final error = restoreError;
+    if (!restoring && error is ApiError && error.status == 0) {
+      restore();
+    } else {
+      refreshIdentity();
+    }
   }
 
   @override
@@ -163,6 +174,7 @@ class _HarborState extends State<HarborApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final current = user;
+    final lightTheme = harborTheme(Brightness.light);
     final theme = switch (current?['theme']) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
@@ -172,7 +184,7 @@ class _HarborState extends State<HarborApp> with WidgetsBindingObserver {
       title: '心灵港湾',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigation,
-      theme: harborTheme(Brightness.light),
+      theme: space == 'student' ? studentTheme(lightTheme) : lightTheme,
       darkTheme: harborTheme(Brightness.dark),
       themeMode: theme,
       locale: const Locale('zh', 'CN'),
@@ -583,6 +595,7 @@ class _ShellState extends State<HarborShell> {
   int active = 0, unread = 0;
   Timer? polling;
   bool get work => widget.space != 'student';
+  String get accountId => text(widget.user, 'id');
   @override
   void initState() {
     super.initState();
@@ -668,6 +681,59 @@ class _ShellState extends State<HarborShell> {
     }
   }
 
+  Future<void> showJournal([String? mood]) async {
+    await open(context, JournalPage(widget.api, initialMood: mood));
+  }
+
+  void showAudio() => open(context, SoundLibraryPage(accountId: accountId));
+
+  Future<void> showFavorites() async {
+    await open(
+      context,
+      SoundLibraryPage(accountId: accountId, favoritesOnly: true),
+    );
+  }
+
+  void showBreathing() => open(context, const BreathingPage());
+
+  void showDaily() => open(context, DailyCardPage(accountId: accountId));
+
+  void showPet() => open(context, PetPage(widget.api, accountId));
+
+  void showShortcut(HarborShortcut shortcut) {
+    switch (shortcut) {
+      case HarborShortcut.journal:
+        showJournal();
+      case HarborShortcut.audio:
+        showAudio();
+      case HarborShortcut.questions:
+        open(context, const CheckInQuestionsPage());
+      case HarborShortcut.daily:
+        showDaily();
+      case HarborShortcut.plaza:
+        open(
+          context,
+          CommunityPage(widget.api, widget.user, resonanceOnly: true),
+        );
+      case HarborShortcut.sleep:
+        open(context, SleepPage(widget.api));
+      case HarborShortcut.pet:
+        showPet();
+      case HarborShortcut.breathing:
+        showBreathing();
+    }
+  }
+
+  Widget profileSettings() => ProfilePage(
+    widget.api,
+    widget.user,
+    work: work,
+    space: widget.space,
+    onSpace: widget.onSpace,
+    onUser: widget.onUser,
+    onLogout: widget.onLogout,
+  );
+
   @override
   Widget build(BuildContext context) {
     final pages = work
@@ -676,7 +742,23 @@ class _ShellState extends State<HarborShell> {
             AppointmentsPage(widget.api, work: true),
           ]
         : [
-            AiPage(widget.api, widget.user, active: active == 0),
+            AiPage(
+              widget.api,
+              widget.user,
+              active: active == 0,
+              onPet: showPet,
+              shortcuts: StudentShortcuts(
+                accountId: accountId,
+                onSelect: showShortcut,
+              ),
+            ),
+            StudentSchoolPage(
+              widget.api,
+              accountId: accountId,
+              heroAsset: 'assets/student/school-cover.jpg',
+              onAudio: showAudio,
+              onBreathing: showBreathing,
+            ),
             CommunityPage(widget.api, widget.user),
           ];
     final messageIcon = Badge.count(
@@ -690,22 +772,33 @@ class _ShellState extends State<HarborShell> {
         index: active,
         children: [
           ...pages,
-          MessagesPage(
-            widget.api,
-            widget.user,
-            work: work,
-            active: active == 2,
-            onNotice: notification,
-          ),
-          ProfilePage(
-            widget.api,
-            widget.user,
-            work: work,
-            space: widget.space,
-            onSpace: widget.onSpace,
-            onUser: widget.onUser,
-            onLogout: widget.onLogout,
-          ),
+          if (work) ...[
+            MessagesPage(
+              widget.api,
+              widget.user,
+              work: true,
+              active: active == 2,
+              onNotice: notification,
+            ),
+            profileSettings(),
+          ] else ...[
+            StudentMessagesPage(
+              widget.api,
+              widget.user,
+              active: active == 3,
+              onNotice: notification,
+              onAi: () => setState(() => active = 0),
+            ),
+            StudentProfilePage(
+              widget.api,
+              widget.user,
+              active: active == 4,
+              settings: profileSettings,
+              onJournal: showJournal,
+              onAudio: showFavorites,
+              onDaily: showDaily,
+            ),
+          ],
         ],
       ),
       bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
@@ -730,13 +823,18 @@ class _ShellState extends State<HarborShell> {
                   ),
                 ] else ...const [
                   NavigationDestination(
-                    icon: Icon(Icons.spa_outlined),
-                    selectedIcon: Icon(Icons.spa_rounded),
-                    label: '陪伴',
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home_rounded),
+                    label: '首页',
                   ),
                   NavigationDestination(
-                    icon: Icon(Icons.forum_outlined),
-                    selectedIcon: Icon(Icons.forum_rounded),
+                    icon: Icon(Icons.school_outlined),
+                    selectedIcon: Icon(Icons.school_rounded),
+                    label: '学堂',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.people_outline_rounded),
+                    selectedIcon: Icon(Icons.people_rounded),
                     label: '社区',
                   ),
                 ],
