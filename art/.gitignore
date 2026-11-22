@@ -1,0 +1,5 @@
+node_modules/
+*.blend1
+preview.png
+extreme-*.png
+greeting.png

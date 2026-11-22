@@ -1,0 +1,2 @@
+*.bat text eol=crlf
+apps/mobile/assets/companion/viewer.js linguist-generated=true -whitespace

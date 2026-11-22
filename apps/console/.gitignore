@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env.local
+playwright-report/
+test-results/
+
+visual-checks/
+
+playwright-mobile-report/
+test-results-mobile/
