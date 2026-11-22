@@ -39,7 +39,7 @@ Android 安装包可用 `flutter build apk --dart-define=HARBOR_API_URL=...` 构
 
 ### 发布 iOS TestFlight 内测
 
-PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testflight.yml)。它先执行 Flutter 测试，再签名上传仅供 TestFlight 内部测试的联网构建。App Store Connect 在处理完成后把构建分发给已启用自动分发的内部测试组。安装设备需要能访问部署的后端，并在提示时允许 App 访问本地网络。
+PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testflight.yml)。工作流按锁文件安装 Flutter 依赖，归档并签名上传内测联网版。App Store Connect 在处理完成后把构建分发给已启用自动分发的内部测试组。安装设备需要能访问部署的后端，并在提示时允许 App 访问本地网络。
 
 在 GitHub 的 `testflight` 环境中把部署分支限制为 `main`，并设置以下变量和 Secrets。
 
@@ -55,8 +55,6 @@ PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testf
 | Secret | `HARBOR_API_URL` | iPhone 可访问的后端 URL |
 
 构建使用专用的 Apple Distribution 证书和 `dev.oines.xlgw` 的 App Store Connect 描述文件签名，团队 API Key 用于上传。证书更新时需要同时更新与之配套的描述文件。若使用 HTTP，构建会按后端主机生成对应的 iOS 网络例外。版本从 `apps/mobile/pubspec.yaml` 读取，构建号由 Actions 运行编号和尝试次数生成。
-
-本地可在 `apps/mobile` 运行 `flutter pub get --enforce-lockfile` 和 `flutter test --no-pub`。在仓库根目录运行 `actionlint` 校验工作流。若本地 actionlint 仍不识别 GitHub Actions 的 `queue` 字段，可用 `actionlint -ignore 'unexpected key "queue" for "concurrency" section'` 校验其余配置。
 
 发布失败时，在 GitHub Actions 查看失败步骤。可重跑失败的任务，也可在 Actions 的 iOS TestFlight 页面从 `main` 手动触发。
 
