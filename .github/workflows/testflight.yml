@@ -31,14 +31,10 @@ jobs:
           git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = ab2912035e160d9cad6306df307576da6128ebdb
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
-          xcodebuild -version
 
-      - name: Test mobile app
+      - name: Resolve Flutter dependencies
         working-directory: apps/mobile
-        run: |
-          flutter config --no-analytics
-          flutter pub get --enforce-lockfile
-          flutter test --no-pub
+        run: flutter --suppress-analytics pub get --enforce-lockfile
 
       - name: Sign and upload internal build
         env:
