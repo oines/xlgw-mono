@@ -17,15 +17,15 @@ umask 077
 release_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/xlgw-testflight.XXXXXX")"
 app_plist=ios/Runner/Info.plist
 bundle_id=dev.oines.xlgw
-installed_profile=
+installed_profiles=()
 signing_keychain="$release_dir/signing.keychain-db"
 cleanup() {
   if [[ -f "$release_dir/original-info.plist" ]]; then
     cp -p "$release_dir/original-info.plist" "$app_plist"
   fi
-  if [[ -n "$installed_profile" ]]; then
-    rm -f -- "$installed_profile"
-  fi
+  for profile_path in ${installed_profiles[@]+"${installed_profiles[@]}"}; do
+    rm -f -- "$profile_path"
+  done
   if [[ -f "$signing_keychain" ]]; then
     security delete-keychain "$signing_keychain" >/dev/null 2>&1 || true
   fi
@@ -143,13 +143,15 @@ certificates = profile.get("DeveloperCertificates", [])
 if identity.lower() not in {hashlib.sha1(certificate).hexdigest() for certificate in certificates}:
     sys.exit("The App Store Connect provisioning profile does not match the imported certificate.")
 
-profile_uuid = str(UUID(profile["UUID"])).upper()
+profile_uuid = profile["UUID"]
+if str(UUID(profile_uuid)) != profile_uuid.lower():
+    sys.exit("The provisioning profile does not have a canonical UUID.")
 export_options = {
     "destination": "upload",
     "method": "app-store-connect",
     "signingStyle": "manual",
     "signingCertificate": identity,
-    "provisioningProfiles": {bundle_id: profile_uuid},
+    "provisioningProfiles": {bundle_id: profile["Name"]},
     "teamID": team_id,
     "manageAppVersionAndBuildNumber": False,
     "testFlightInternalTestingOnly": True,
@@ -159,15 +161,7 @@ Path(export_file).write_bytes(plistlib.dumps(export_options))
 print(profile_uuid)
 PY
 )"
-profile_directory="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-profile_path="$profile_directory/$profile_uuid.mobileprovision"
-mkdir -p "$profile_directory"
-if [[ -e "$profile_path" ]]; then
-  cmp -s "$profile_path" "$profile_file"
-else
-  installed_profile="$profile_path"
-  cp "$profile_file" "$installed_profile"
-fi
+profile_name="$(plutil -extract Name raw "$release_dir/profile.plist")"
 
 # Reserve low build numbers for the manually uploaded predecessors.
 build_number="$((3 + GITHUB_RUN_NUMBER / 100)).$((GITHUB_RUN_NUMBER % 100)).$GITHUB_RUN_ATTEMPT"
@@ -182,18 +176,35 @@ flutter build ios --config-only --release --no-pub --no-codesign --build-number=
   --dart-define="HARBOR_API_URL=$HARBOR_API_URL"
 unset HARBOR_API_URL
 
+# Xcode supports its UserData store and the original MobileDevice store.
+for profile_directory in \
+  "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+  "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+  profile_path="$profile_directory/$profile_uuid.mobileprovision"
+  if [[ -e "$profile_path" ]]; then
+    cmp -s "$profile_path" "$profile_file"
+  else
+    mkdir -p -m 0755 "$profile_directory"
+    install -m 0644 "$profile_file" "$profile_path"
+    installed_profiles+=("$profile_path")
+  fi
+done
+
 xcodebuild -quiet archive -workspace ios/Runner.xcworkspace -scheme Runner \
   -configuration Release -destination 'generic/platform=iOS' -archivePath "$archive_path" \
   "HARBOR_RELEASE_SIGN_STYLE=Manual" \
   "HARBOR_RELEASE_SIGN_TEAM=$APPLE_TEAM_ID" \
-  "HARBOR_RELEASE_SIGN_IDENTITY=$identity" \
-  "HARBOR_RELEASE_SIGN_PROFILE=$profile_uuid"
+  "HARBOR_RELEASE_SIGN_IDENTITY=Apple Distribution" \
+  "HARBOR_RELEASE_SIGN_PROFILE=$profile_name"
 
 archive_app="$archive_path/Products/Applications/Runner.app"
 archive_plist="$archive_app/Info.plist"
 codesign --verify --strict "$archive_app"
 security cms -D -i "$archive_app/embedded.mobileprovision" -o "$release_dir/embedded-profile.plist"
-test "$(plutil -extract UUID raw "$release_dir/embedded-profile.plist")" = "$profile_uuid"
+if [[ "$(plutil -extract UUID raw "$release_dir/embedded-profile.plist")" != "$profile_uuid" ]]; then
+  printf '%s\n' 'Xcode embedded a different provisioning profile than the selected release profile.' >&2
+  exit 1
+fi
 test "$(plutil -extract CFBundleIdentifier raw "$archive_plist")" = "$bundle_id"
 test "$(plutil -extract CFBundleDisplayName raw "$archive_plist")" = 心灵港湾
 test "$(plutil -extract CFBundleVersion raw "$archive_plist")" = "$build_number"
