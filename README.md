@@ -58,6 +58,12 @@ PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testf
 
 发布失败时，在 GitHub Actions 查看失败步骤。可重跑失败的任务，也可在 Actions 的 iOS TestFlight 页面从 `main` 手动触发。
 
+### 发布 Android 联网安装包
+
+PR 合并进 `main` 后，[Android APK 工作流](.github/workflows/android-apk.yml) 独立构建通用联网版，并将 APK 发布到对应提交的 [GitHub Releases](https://github.com/oines/xlgw-mono/releases)。标签格式为 `android-v<版本>-b<版本代码>`，版本代码是该工作流的运行编号加 2。重跑会沿用同一个标签。
+
+在 GitHub 的 `android-release` 环境中把部署分支限制为 `main`。配置 `ANDROID_KEYSTORE_BASE64` 为以往联网 APK 使用的 Android 调试密钥库的 Base64 编码，配置 `HARBOR_API_URL` 为安装设备可访问的后端 URL。沿用签名可保留原 App 数据覆盖更新。后端地址会编入公开 APK，联网功能需要能访问校园后端。
+
 ### 导出离线 Mock APK
 
 改完功能后，在仓库根目录运行 `make mobile-mock-apk`，把生成的 `dist/心灵港湾-Mock.apk` 发给体验者。命令会用当前工作区的源码构建。可用 `./scripts/export-mock-apk.sh /path/to/demo.apk` 指定导出文件，或用 `make mobile-mock-apk FLUTTER=/path/to/flutter` 指定 SDK。
