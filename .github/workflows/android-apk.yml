@@ -80,6 +80,9 @@ jobs:
 
           version_code=$((GITHUB_RUN_NUMBER + 2))
           version="$(awk '/^version:/ { split($2, parts, "+"); print parts[1] }' pubspec.yaml)"
+          # AGP 9.3.1 lint calls Java 21 APIs on a clean release build.
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
           flutter --suppress-analytics build apk --release --no-pub \
             --build-number="$version_code" --dart-define="HARBOR_API_URL=$HARBOR_API_URL"
           tag="android-v$version-b$version_code"
