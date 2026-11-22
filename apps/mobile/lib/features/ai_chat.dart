@@ -1,8 +1,8 @@
-import '../companion/image.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../companion/editor.dart';
@@ -13,10 +13,19 @@ import 'care.dart';
 import 'ai_history.dart';
 
 class AiPage extends StatefulWidget {
-  const AiPage(this.api, this.user, {super.key, this.active = true});
+  const AiPage(
+    this.api,
+    this.user, {
+    super.key,
+    this.active = true,
+    required this.shortcuts,
+    required this.onPet,
+  });
   final HarborApi api;
   final Data user;
   final bool active;
+  final Widget shortcuts;
+  final VoidCallback onPet;
   @override
   State<AiPage> createState() => _AiPageState();
 }
@@ -317,7 +326,7 @@ class _AiPageState extends State<AiPage> {
       '使用 AI 伙伴',
       harborOffline
           ? '离线体验使用预设回复。你输入的内容仅保存在这台设备，分享和求助也只在本机模拟。'
-          : '你发送的消息和必要的对话上下文会交给模型服务处理，聊天记录保存在你的账号下。工作人员只能查看你确认分享给他们的内容。AI 可以陪你梳理心情，也可以带你找到校内支持。',
+          : '你发送的消息和必要的对话上下文会发给学校配置的第三方模型服务生成回复。新建个人 AI 对话保存 7 天。工作人员可以查看你主动分享给他们的副本，已分享的副本按服务授权保留。',
       confirm: '同意并继续',
     );
     if (!agrees || !mounted) return false;
@@ -648,376 +657,424 @@ class _AiPageState extends State<AiPage> {
         !history.any((v) => v['input_id'] == pendingId) &&
         issue == null;
     final isBlank = history.isEmpty && !showPending && !activeRun && !loading;
+    final chat = Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 2),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 19,
+                backgroundColor: t.colorScheme.primary,
+                foregroundColor: t.colorScheme.onPrimary,
+                child: const Icon(Icons.auto_awesome_rounded, size: 18),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '小港 · AI 倾听者',
+                      style: t.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      harborOffline ? '离线体验' : '想说的时候，我在。',
+                      style: t.textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: '聊天选项',
+                icon: const Icon(Icons.more_horiz_rounded),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'avatar':
+                      setState(() => showAvatar = !showAvatar);
+                    case 'appearance':
+                      editAvatar();
+                    case 'support':
+                      open(context, SupportPage(widget.api));
+                    case 'end':
+                      gesture('farewell');
+                      select({});
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'avatar',
+                    child: Text(showAvatar ? '收起伙伴形象' : '显示伙伴形象'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'appearance',
+                    child: Text('更换伙伴形象'),
+                  ),
+                  const PopupMenuItem(value: 'support', child: Text('找人聊聊')),
+                  if (id.isNotEmpty)
+                    const PopupMenuItem(value: 'end', child: Text('结束本次聊天')),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (!tight && showAvatar)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+            child: Stack(
+              children: [
+                GestureDetector(
+                  onTap: activeRun ? null : () => gesture('reply'),
+                  child: SizedBox(
+                    height: 125,
+                    width: double.infinity,
+                    child: CompanionView(
+                      config: config,
+                      state: run['risk'] == true
+                          ? 'help'
+                          : activeRun
+                          ? 'thinking'
+                          : action != 'idle'
+                          ? action
+                          : compose.text.isNotEmpty
+                          ? 'listening'
+                          : 'idle',
+                      paused: !widget.active,
+                      motion: text(widget.user, 'motion', 'standard'),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 13,
+                  left: 13,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: t.colorScheme.surface.withAlpha(223),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      child: Text('AI 伙伴', style: t.textTheme.labelMedium),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 10,
+                  bottom: 9,
+                  child: TextButton.icon(
+                    onPressed: editAvatar,
+                    style: TextButton.styleFrom(
+                      backgroundColor: t.colorScheme.surface.withAlpha(230),
+                    ),
+                    icon: const Icon(Icons.tune_rounded, size: 18),
+                    label: const Text('形象'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: loading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView(
+                  controller: scroll,
+                  padding: const EdgeInsets.fromLTRB(13, 7, 13, 10),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: [
+                    if (nextCursor.isNotEmpty)
+                      Center(
+                        child: TextButton(
+                          onPressed: loadingEarlier ? null : earlier,
+                          child: Text(loadingEarlier ? '加载中…' : '查看更早的消息'),
+                        ),
+                      ),
+                    if (isBlank)
+                      messageBubble({
+                        'role': 'assistant',
+                        'text': '今天有什么想放下的吗？从一句话开始就好。',
+                      }),
+                    for (final message in history)
+                      messageBubble(
+                        message,
+                        shareable:
+                            text(message, 'id').isNotEmpty &&
+                            !text(message, 'id').startsWith('pending-'),
+                      ),
+                    if (showPending)
+                      messageBubble({'role': 'user', 'text': pendingText}),
+                    if (activeRun)
+                      messageBubble({
+                        'role': 'assistant',
+                        'text': streaming.isEmpty ? '在听，也在想怎么回应你…' : streaming,
+                      }),
+                    if (terminalFailure)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Surface(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  text(
+                                    run,
+                                    'error',
+                                    run['status'] == 'failed'
+                                        ? '这次回复没有完成。'
+                                        : '已停止本次回复。',
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: sending ? null : retry,
+                                child: const Text('重试'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (run['risk'] == true)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Surface(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '你可以找一位真人一起面对',
+                                style: t.textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 8),
+                              const Text('如果你目前不安全，请立即联系身边可信的人或当地紧急服务。'),
+                              const SizedBox(height: 12),
+                              FilledButton.tonal(
+                                onPressed: () =>
+                                    open(context, HelpPage(widget.api)),
+                                child: const Text('希望有人联系我'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    for (final act in objects(run['actions']))
+                      if (act['kind'] != 'help' || run['risk'] != true)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: ListTile(
+                            tileColor: t.colorScheme.surface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            onTap: () => handleAction(act),
+                            title: Text(text(act, 'title')),
+                            subtitle: text(act, 'description').isEmpty
+                                ? null
+                                : Text(text(act, 'description')),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                          ),
+                        ),
+                    if (issue != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: LoadError(issue!, () {
+                          if (pendingText.isNotEmpty) {
+                            retry();
+                          } else if (id.isEmpty) {
+                            initialize();
+                          } else {
+                            reload(generation, subscribe: true);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+        ),
+        if (awayFromLatest)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: OutlinedButton.icon(
+              onPressed: () => moveToLatest(force: true),
+              icon: const Icon(Icons.arrow_downward_rounded, size: 17),
+              label: const Text('回到最新'),
+            ),
+          ),
+        if (!tight && !activeRun && isBlank)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 5,
+                children: [
+                  for (final sample in const ['我有点焦虑', '睡不着', '想聊聊今天'])
+                    ActionChip(
+                      label: Text(sample),
+                      labelStyle: t.textTheme.labelSmall,
+                      side: BorderSide.none,
+                      backgroundColor: t.colorScheme.surface,
+                      onPressed: () {
+                        compose.text = sample;
+                        focus.requestFocus();
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        Material(
+          color: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: compose,
+                        focusNode: focus,
+                        minLines: 1,
+                        maxLines: 4,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        decoration: const InputDecoration(
+                          hintText: '和小港说说此刻的心情…',
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: activeRun ? '停止回复' : '发送',
+                      constraints: const BoxConstraints.tightFor(
+                        width: 48,
+                        height: 48,
+                      ),
+                      onPressed: activeRun
+                          ? (stopping ? null : stop)
+                          : (sending || compose.text.trim().isEmpty
+                                ? null
+                                : send),
+                      icon: sending || stopping
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              activeRun
+                                  ? Icons.stop_rounded
+                                  : Icons.arrow_upward_rounded,
+                            ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
     return Scaffold(
       appBar: AppBar(
-        centerTitle: true,
-        leadingWidth: 52,
+        toolbarHeight: 67,
         leading: IconButton(
           onPressed: openHistory,
           tooltip: '会话历史',
-          icon: const Icon(Icons.history_rounded),
+          icon: const Icon(Icons.menu_rounded),
         ),
-        title: isBlank
-            ? const Text('心灵港湾')
-            : InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => setState(() => showAvatar = !showAvatar),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 4,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ClipOval(
-                        child: CompanionImage(
-                          'poster-${text(config, 'preset', 'clear')}.png',
-                          width: 36,
-                          height: 36,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Flexible(
-                        child: Text(
-                          'AI 伙伴',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('我的情绪空间'),
+            Text(
+              DateFormat('M月d日 EEEE', 'zh_CN').format(DateTime.now()),
+              style: t.textTheme.labelSmall?.copyWith(
+                color: t.colorScheme.onSurfaceVariant,
               ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(
-            onPressed: () => open(context, SupportPage(widget.api)),
-            child: const Text('找人聊聊'),
+          IconButton.filledTonal(
+            onPressed: widget.onPet,
+            tooltip: '宠物模式',
+            icon: const Icon(Icons.pets_outlined),
           ),
-          if (id.isNotEmpty)
-            PopupMenuButton<String>(
-              tooltip: '聊天操作',
-              onSelected: (_) {
-                gesture('farewell');
-                select({});
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'end', child: Text('结束本次聊天')),
-              ],
-            )
-          else
-            const SizedBox(width: 8),
+          const SizedBox(width: 16),
         ],
       ),
       body: SafeArea(
         top: false,
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 780),
-            child: Column(
-              children: [
-                if (!tight && (isBlank || showAvatar))
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                    child: Stack(
-                      children: [
-                        GestureDetector(
-                          onTap: activeRun ? null : () => gesture('reply'),
-                          child: SizedBox(
-                            height: isBlank ? 242 : 136,
-                            width: double.infinity,
-                            child: CompanionView(
-                              config: config,
-                              state: run['risk'] == true
-                                  ? 'help'
-                                  : activeRun
-                                  ? 'thinking'
-                                  : action != 'idle'
-                                  ? action
-                                  : compose.text.isNotEmpty
-                                  ? 'listening'
-                                  : 'idle',
-                              paused: !widget.active,
-                              motion: text(widget.user, 'motion', 'standard'),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 13,
-                          left: 13,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: t.colorScheme.surface.withAlpha(223),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 7,
-                              ),
-                              child: Text(
-                                'AI 伙伴',
-                                style: t.textTheme.labelMedium,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 10,
-                          bottom: 9,
-                          child: TextButton.icon(
-                            onPressed: editAvatar,
-                            style: TextButton.styleFrom(
-                              backgroundColor: t.colorScheme.surface.withAlpha(
-                                230,
-                              ),
-                            ),
-                            icon: const Icon(Icons.tune_rounded, size: 18),
-                            label: const Text('形象'),
-                          ),
-                        ),
-                      ],
-                    ),
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final height = tight
+                    ? constraints.maxHeight - 8
+                    : (constraints.maxHeight - 225)
+                          .clamp(330.0, 470.0)
+                          .toDouble();
+                final card = Container(
+                  height: height.clamp(0.0, double.infinity).toDouble(),
+                  decoration: BoxDecoration(
+                    color: t.colorScheme.primaryContainer,
+                    gradient: t.brightness == Brightness.light
+                        ? const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xffe7efe5), Color(0xfff8f2e7)],
+                          )
+                        : null,
+                    borderRadius: BorderRadius.circular(25),
+                    boxShadow: [
+                      BoxShadow(
+                        color: t.colorScheme.shadow.withValues(alpha: 0.05),
+                        blurRadius: 22,
+                        offset: const Offset(0, 7),
+                      ),
+                    ],
                   ),
-                Expanded(
-                  child: loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : ListView(
-                          controller: scroll,
-                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          children: [
-                            if (nextCursor.isNotEmpty)
-                              Center(
-                                child: TextButton(
-                                  onPressed: loadingEarlier ? null : earlier,
-                                  child: Text(
-                                    loadingEarlier ? '加载中…' : '查看更早的消息',
-                                  ),
-                                ),
-                              ),
-                            if (isBlank) ...[
-                              Text(
-                                '想从哪里说起？',
-                                style: t.textTheme.headlineMedium,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '想说心情、课业或相处里的小事，都可以从一句话开始。',
-                                style: t.textTheme.bodyLarge?.copyWith(
-                                  color: t.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  for (final sample in [
-                                    '最近有点累',
-                                    '想聊聊人际关系',
-                                    '有件事让我很开心',
-                                  ])
-                                    ActionChip(
-                                      label: Text(sample),
-                                      onPressed: () {
-                                        compose.text = sample;
-                                        focus.requestFocus();
-                                      },
-                                    ),
-                                ],
-                              ),
-                            ],
-                            for (final message in history)
-                              messageBubble(
-                                message,
-                                shareable:
-                                    text(message, 'id').isNotEmpty &&
-                                    !text(message, 'id').startsWith('pending-'),
-                              ),
-                            if (showPending)
-                              messageBubble({
-                                'role': 'user',
-                                'text': pendingText,
-                              }),
-                            if (activeRun)
-                              messageBubble({
-                                'role': 'assistant',
-                                'text': streaming.isEmpty
-                                    ? '在听，也在想怎么回应你…'
-                                    : streaming,
-                              }),
-                            if (terminalFailure)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                                child: Surface(
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          text(
-                                            run,
-                                            'error',
-                                            run['status'] == 'failed'
-                                                ? '这次回复没有完成。'
-                                                : '已停止本次回复。',
-                                          ),
-                                        ),
-                                      ),
-                                      TextButton(
-                                        onPressed: sending ? null : retry,
-                                        child: const Text('重试'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            if (run['risk'] == true)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                                child: Surface(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '你可以找一位真人一起面对',
-                                        style: t.textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      const Text(
-                                        '如果你目前不安全，请立即联系身边可信的人或当地紧急服务。',
-                                      ),
-                                      const SizedBox(height: 12),
-                                      FilledButton.tonal(
-                                        onPressed: () =>
-                                            open(context, HelpPage(widget.api)),
-                                        child: const Text('希望有人联系我'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            for (final act in objects(run['actions']))
-                              if (act['kind'] != 'help' || run['risk'] != true)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: ListTile(
-                                    tileColor: t.colorScheme.surface,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    onTap: () => handleAction(act),
-                                    title: Text(text(act, 'title')),
-                                    subtitle: text(act, 'description').isEmpty
-                                        ? null
-                                        : Text(text(act, 'description')),
-                                    trailing: const Icon(
-                                      Icons.chevron_right_rounded,
-                                    ),
-                                  ),
-                                ),
-                            if (issue != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: LoadError(issue!, () {
-                                  if (pendingText.isNotEmpty) {
-                                    retry();
-                                  } else if (id.isEmpty) {
-                                    initialize();
-                                  } else {
-                                    reload(generation, subscribe: true);
-                                  }
-                                }),
-                              ),
-                          ],
-                        ),
-                ),
-                if (awayFromLatest)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: OutlinedButton.icon(
-                      onPressed: () => moveToLatest(force: true),
-                      icon: const Icon(Icons.arrow_downward_rounded, size: 17),
-                      label: const Text('回到最新'),
+                  child: chat,
+                );
+                if (tight)
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 15,
+                      vertical: 4,
                     ),
-                  ),
-                Material(
-                  color: t.colorScheme.surface,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-                    child: Column(
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: compose,
-                                focusNode: focus,
-                                minLines: 1,
-                                maxLines: 4,
-                                keyboardType: TextInputType.multiline,
-                                textInputAction: TextInputAction.newline,
-                                decoration: const InputDecoration(
-                                  hintText: '说说此刻的心情…',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 14,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton.filled(
-                              tooltip: activeRun ? '停止回复' : '发送',
-                              constraints: const BoxConstraints.tightFor(
-                                width: 48,
-                                height: 48,
-                              ),
-                              onPressed: activeRun
-                                  ? (stopping ? null : stop)
-                                  : (sending || compose.text.trim().isEmpty
-                                        ? null
-                                        : send),
-                              icon: sending || stopping
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(
-                                      activeRun
-                                          ? Icons.stop_rounded
-                                          : Icons.arrow_upward_rounded,
-                                    ),
-                            ),
-                          ],
-                        ),
-                        if (!tight)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              harborOffline
-                                  ? '离线体验 · AI 伙伴使用本地模拟回复'
-                                  : 'AI 伙伴提供日常陪伴，需要时也可以联系校内支持。',
-                              textAlign: TextAlign.center,
-                              style: t.textTheme.labelMedium,
-                            ),
-                          ),
-                      ],
+                    child: card,
+                  );
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(17, 4, 17, 12),
+                  children: [
+                    card,
+                    const SizedBox(height: 5),
+                    widget.shortcuts,
+                    const SizedBox(height: 14),
+                    Text(
+                      harborOffline
+                          ? '离线体验 · 日记仅保存在这台设备。'
+                          : '社区可匿名发布 · 不绑定学号 · 新建 AI 对话保存 7 天',
+                      textAlign: TextAlign.center,
+                      style: t.textTheme.labelSmall?.copyWith(
+                        color: t.colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ),

@@ -15,18 +15,19 @@ import (
 )
 
 type Conversation struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string     `json:"id"`
+	Title     string     `json:"title"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	sessionID string
 	owner     string
 }
 
-const conversationColumns = "id::text,title,created_at,updated_at,session_id,user_id::text"
+const conversationColumns = "id::text,title,created_at,updated_at,expires_at,session_id,user_id::text"
 
 func scanConversation(row interface{ Scan(...any) error }) (c Conversation, err error) {
-	err = row.Scan(&c.ID, &c.Title, &c.CreatedAt, &c.UpdatedAt, &c.sessionID, &c.owner)
+	err = row.Scan(&c.ID, &c.Title, &c.CreatedAt, &c.UpdatedAt, &c.ExpiresAt, &c.sessionID, &c.owner)
 	return
 }
 
@@ -166,22 +167,24 @@ func (s *Service) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err = s.store.mutate(ctx, func(tx pgx.Tx) error {
-		// Remove retry forks as well as the current session. Detached retry
-		// rollouts are private to the same business conversation.
-		_, err := tx.Exec(ctx, `DELETE FROM agent.rollouts WHERE id IN (
-			SELECT rollout_id FROM agent.sessions WHERE id=$2 OR id IN (
-				SELECT session_id FROM app.ai_runs WHERE conversation_id=$1))`, c.ID, c.sessionID)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, "DELETE FROM app.ai_conversations WHERE id=$1 AND user_id=$2", id, owner)
-		return err
+		return deleteConversationData(ctx, tx, c)
 	})
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func deleteConversationData(ctx context.Context, tx pgx.Tx, c Conversation) error {
+	// Detached retry rollouts are private to the same conversation.
+	if _, err := tx.Exec(ctx, `DELETE FROM agent.rollouts WHERE id IN (
+		SELECT rollout_id FROM agent.sessions WHERE id=$2 OR id IN (
+			SELECT session_id FROM app.ai_runs WHERE conversation_id=$1))`, c.ID, c.sessionID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, "DELETE FROM app.ai_conversations WHERE id=$1 AND user_id=$2", c.ID, c.owner)
+	return err
 }
 
 type Message struct {

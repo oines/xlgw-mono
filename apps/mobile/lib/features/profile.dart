@@ -108,7 +108,7 @@ class _ProfileState extends State<ProfilePage> {
         .where((e) => e != 'admin')
         .toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('我的')),
+      appBar: AppBar(title: Text(widget.work ? '我的' : '设置')),
       body: HarborList(
         refresh: load,
         children: [
@@ -348,7 +348,7 @@ class _ProfileState extends State<ProfilePage> {
           const SizedBox(height: 20),
           Center(
             child: Text(
-              harborOffline ? '心灵港湾 · 离线体验' : '心灵港湾 1.0',
+              harborOffline ? '心灵港湾 · 离线体验' : '心灵港湾',
               style: t.textTheme.labelMedium,
             ),
           ),

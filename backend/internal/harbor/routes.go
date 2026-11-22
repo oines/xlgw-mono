@@ -13,6 +13,9 @@ func (s *Server) Register(m *http.ServeMux) {
 	for route, fn := range map[string]endpoint{
 		"GET /me": s.me, "PATCH /me": s.updateMe, "POST /me/password": s.password, "GET /me/shares": s.myShares,
 		"GET /me/ai-consent": s.aiConsent, "POST /me/ai-consent": s.aiConsent,
+		"GET /wellbeing/journal": s.wellbeingJournal, "PUT /wellbeing/journal/{day}": s.saveWellbeingJournal, "DELETE /wellbeing/journal/{day}": s.deleteWellbeingJournal,
+		"GET /wellbeing/sleep": s.wellbeingSleep, "PUT /wellbeing/sleep/{day}": s.saveWellbeingSleep,
+		"GET /wellbeing/export": s.exportWellbeing, "DELETE /wellbeing/data": s.deleteWellbeing,
 		"GET /avatars/catalog": s.catalog, "GET /avatars/me": s.avatar, "PUT /avatars/me": s.saveAvatar,
 		"GET /staff": s.staffList, "GET /staff/{id}": s.staffDetail, "GET /staff/me": s.myStaff, "PATCH /staff/me": s.editStaff,
 		"GET /slots": s.slots, "POST /slots": s.addSlots, "DELETE /slots/{id}": s.deleteSlot,
@@ -29,6 +32,7 @@ func (s *Server) Register(m *http.ServeMux) {
 		"GET /chat-requests": s.chatRequests, "POST /chat-requests": s.createChatRequest, "POST /chat-requests/{id}/{action}": s.chatAction,
 		"GET /notifications": s.notifications, "POST /notifications/{id}/read": s.readNotice, "POST /notifications/read-all": s.readAllNotices,
 		"GET /posts": s.posts, "GET /posts/{id}": s.postDetail, "POST /posts": s.createPost, "PATCH /posts/{id}": s.editPost, "DELETE /posts/{id}": s.deletePost,
+		"POST /posts/{id}/block": s.blockCommunityPost, "DELETE /posts/{id}/block": s.unblockCommunityPost,
 		"GET /posts/{id}/comments": s.comments, "POST /posts/{id}/comments": s.createComment, "GET /comments": s.myComments, "DELETE /comments/{id}": s.deleteComment,
 		"PUT /posts/{id}/resonance": s.resonance, "GET /people/{id}": s.person, "GET /blocks": s.blocks, "POST /blocks/{id}": s.block, "DELETE /blocks/{id}": s.unblock,
 		"POST /reports": s.report, "GET /feedback": s.feedback, "POST /feedback": s.createFeedback,

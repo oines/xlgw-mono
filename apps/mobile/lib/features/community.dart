@@ -5,23 +5,40 @@ import 'package:flutter/material.dart';
 
 import '../shared/api.dart';
 import '../shared/design.dart';
+import 'student_surface.dart';
 
 const _moods = ['平静', '开心', '低落', '焦虑', '疲惫', '孤单', '生气', '期待', '迷茫'];
-const _sorts = {'latest': '最新', 'hot': '热门', 'resonance': '最多共鸣'};
+const _topics = ['推荐', '焦虑', '睡眠', '关系', '树洞'];
 
 class CommunityPage extends StatefulWidget {
-  const CommunityPage(this.api, this.user, {super.key});
+  const CommunityPage(
+    this.api,
+    this.user, {
+    super.key,
+    this.resonanceOnly = false,
+  });
   final HarborApi api;
   final Data user;
+  final bool resonanceOnly;
   @override
   State<CommunityPage> createState() => _CommunityPageState();
 }
 
 class _CommunityPageState extends State<CommunityPage> {
-  String _sort = 'latest';
+  String _topic = '推荐';
   late Future<List<Data>> _posts = _load();
 
-  Future<List<Data>> _load() => widget.api.list('/posts?sort=$_sort');
+  Future<List<Data>> _load() => widget.api.list(
+    widget.resonanceOnly ? '/posts?mode=resonance' : '/posts?sort=latest',
+  );
+
+  bool _matches(Data post) {
+    if (_topic == '推荐') return true;
+    if (_topic == '树洞' && post['mode'] == 'anonymous') return true;
+    final tags = (post['tags'] as List?)?.whereType<String>() ?? const [];
+    return tags.contains(_topic);
+  }
+
   Future<void> _refresh() async {
     final next = _load();
     setState(() {
@@ -37,95 +54,116 @@ class _CommunityPageState extends State<CommunityPage> {
   Future<void> _create() async {
     final post = await open<Data>(
       context,
-      _PostEditor(widget.api, widget.user),
+      _PostEditor(
+        widget.api,
+        widget.user,
+        mode: widget.resonanceOnly ? 'resonance' : 'anonymous',
+        initialTag: _topic == '推荐' ? null : _topic,
+      ),
     );
     if (!mounted || post == null) return;
     _refresh();
+    if (widget.resonanceOnly) return;
     await open(context, PostDetail(widget.api, text(post, 'id'), widget.user));
     if (mounted) _refresh();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('共鸣社区'),
-      actions: [
-        IconButton(
-          tooltip: '我的社区主页',
-          icon: const Icon(Icons.account_circle_outlined),
-          onPressed: () async {
-            await open(
-              context,
-              _AuthorPage(widget.api, text(widget.user, 'id'), widget.user),
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: widget.resonanceOnly ? AppBar() : null,
+      body: SafeArea(
+        bottom: false,
+        child: FutureBuilder<List<Data>>(
+          future: _posts,
+          builder: (_, snapshot) {
+            final posts = snapshot.data?.where(_matches) ?? const <Data>[];
+            return HarborList(
+              refresh: _refresh,
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              children: [
+                StudentTabHeader(
+                  widget.resonanceOnly ? '共鸣广场' : '情绪社区',
+                  subtitle: widget.resonanceOnly
+                      ? '给此刻的感受留个位置'
+                      : '在这里，匿名分享自己的心情',
+                  action: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!widget.resonanceOnly)
+                        IconButton(
+                          tooltip: '我的帖子',
+                          icon: Icon(
+                            Icons.account_circle_outlined,
+                            color: colors.onSurfaceVariant,
+                            size: 20,
+                          ),
+                          onPressed: () async {
+                            await open(
+                              context,
+                              _AuthorPage(
+                                widget.api,
+                                text(widget.user, 'id'),
+                                widget.user,
+                              ),
+                            );
+                            if (mounted) _refresh();
+                          },
+                        ),
+                      IconButton.filled(
+                        tooltip: '发布帖子',
+                        onPressed: _create,
+                        style: IconButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: const Icon(Icons.edit_outlined, size: 21),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                StudentFilters(
+                  options: _topics,
+                  selected: _topic,
+                  onSelect: (topic) => setState(() => _topic = topic),
+                ),
+                const SizedBox(height: 8),
+                if (snapshot.hasError && !snapshot.hasData)
+                  LoadError(snapshot.error!, _refresh)
+                else if (!snapshot.hasData)
+                  const Center(child: CircularProgressIndicator())
+                else if (posts.isEmpty)
+                  Empty(
+                    _topic == '推荐' ? '暂时还没有帖子' : '这个主题下暂时没有帖子',
+                    body: '你可以写下最近的感受。',
+                    icon: Icons.forum_outlined,
+                    action: TextButton(
+                      onPressed: _create,
+                      child: const Text('写帖子'),
+                    ),
+                  )
+                else
+                  for (final post in posts) ...[
+                    _PostItem(
+                      key: ValueKey(text(post, 'id')),
+                      api: widget.api,
+                      user: widget.user,
+                      post: post,
+                      onChange: _refresh,
+                      card: true,
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+              ],
             );
-            if (mounted) _refresh();
           },
         ),
-      ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(48),
-        child: Row(
-          children: [
-            for (final entry in _sorts.entries)
-              Expanded(
-                child: _FilterTab(
-                  title: entry.value,
-                  selected: entry.key == _sort,
-                  select: () {
-                    if (entry.key == _sort) return;
-                    setState(() {
-                      _sort = entry.key;
-                      _posts = _load();
-                    });
-                  },
-                ),
-              ),
-          ],
-        ),
       ),
-    ),
-    body: FutureBuilder<List<Data>>(
-      future: _posts,
-      builder: (_, snapshot) {
-        if (snapshot.hasError && !snapshot.hasData) {
-          return Center(child: LoadError(snapshot.error!, _refresh));
-        }
-        if (!snapshot.hasData)
-          return const Center(child: CircularProgressIndicator());
-        final items = snapshot.data!;
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.only(bottom: 90),
-            children: [
-              if (items.isEmpty)
-                const Empty(
-                  '社区还没有帖子',
-                  body: '分享一个最近的感受，开启一次交流。',
-                  icon: Icons.forum_outlined,
-                ),
-              for (final post in items) ...[
-                _PostItem(
-                  key: ValueKey(text(post, 'id')),
-                  api: widget.api,
-                  user: widget.user,
-                  post: post,
-                  onChange: _refresh,
-                ),
-                const Divider(),
-              ],
-            ],
-          ),
-        );
-      },
-    ),
-    floatingActionButton: FloatingActionButton(
-      tooltip: '发布帖子',
-      onPressed: _create,
-      child: const Icon(Icons.edit_outlined),
-    ),
-  );
+    );
+  }
 }
 
 class _FilterTab extends StatelessWidget {
@@ -178,11 +216,12 @@ class _PostItem extends StatefulWidget {
     required this.post,
     required this.onChange,
     this.full = false,
+    this.card = false,
   });
   final HarborApi api;
   final Data user, post;
   final Future<void> Function() onChange;
-  final bool full;
+  final bool full, card;
 
   @override
   State<_PostItem> createState() => _PostItemState();
@@ -200,10 +239,15 @@ class _PostItemState extends State<_PostItem> {
 
   String get _id => text(_post, 'id');
   String get _author => text(_post, 'author_id');
-  bool get _own => _author == text(widget.user, 'id');
+  bool get _own =>
+      _post['is_owner'] == true ||
+      (_author.isNotEmpty && _author == text(widget.user, 'id'));
+  bool get _anonymous =>
+      _post['mode'] == 'anonymous' || _post['mode'] == 'resonance';
+  bool get _resonanceOnly => _post['mode'] == 'resonance';
 
   Future<void> _openPost() async {
-    if (widget.full) return;
+    if (widget.full || _resonanceOnly) return;
     await open(context, PostDetail(widget.api, _id, widget.user));
     if (mounted) await widget.onChange();
   }
@@ -259,6 +303,25 @@ class _PostItemState extends State<_PostItem> {
         }
       case 'report':
         await reportContent(context, widget.api, 'post', _id);
+      case 'hide':
+        final confirmed = await confirmAction(
+          context,
+          '屏蔽这条帖子',
+          '屏蔽后，你的列表里将不再显示这条帖子。',
+          confirm: '屏蔽',
+        );
+        if (!confirmed || !mounted) return;
+        try {
+          await widget.api.post('/posts/$_id/block');
+          if (!mounted) return;
+          if (widget.full) {
+            Navigator.pop(context);
+          } else {
+            await widget.onChange();
+          }
+        } catch (err) {
+          if (mounted) flash(context, err);
+        }
       case 'block':
         if (await _manageBlock(
               context,
@@ -285,117 +348,148 @@ class _PostItemState extends State<_PostItem> {
     final tags =
         (_post['tags'] as List?)?.whereType<String>().toList() ??
         const <String>[];
-    final name = text(_post, 'author_name', '同学');
+    final name = _anonymous ? '匿名同学' : text(_post, 'author_name', '同学');
 
-    return ColoredBox(
-      color: colors.surface,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: _openAuthor,
-                    child: Row(
-                      children: [
-                        PersonIcon(
-                          name,
-                          url: text(_post, 'author_avatar'),
-                          radius: 18,
-                        ),
-                        const SizedBox(width: 10),
-                        Flexible(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleMedium,
-                              ),
-                              Text(
-                                [
-                                  stamp(_post['created_at'], date: true),
-                                  if (_post['edited'] == true) '已编辑',
-                                ].join(' · '),
-                                style: theme.textTheme.labelMedium,
-                              ),
-                            ],
+    return ClipRRect(
+      borderRadius: widget.card ? BorderRadius.circular(22) : BorderRadius.zero,
+      child: ColoredBox(
+        color: colors.surface,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            widget.card ? 14 : 20,
+            12,
+            widget.card ? 14 : 20,
+            6,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _anonymous || _author.isEmpty ? null : _openAuthor,
+                      child: Row(
+                        children: [
+                          PersonIcon(
+                            name,
+                            url: _anonymous ? '' : text(_post, 'author_avatar'),
+                            radius: 18,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 10),
+                          Flexible(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  name,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                                Text(
+                                  [
+                                    stamp(_post['created_at'], date: true),
+                                    if (_post['edited'] == true) '已编辑',
+                                    if (_post['review_pending'] == true)
+                                      '待人工审核',
+                                  ].join(' · '),
+                                  style: theme.textTheme.labelMedium,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                PopupMenuButton<String>(
-                  tooltip: '帖子操作',
-                  onSelected: _act,
-                  itemBuilder: (_) => _own
-                      ? const [
-                          PopupMenuItem(value: 'edit', child: Text('编辑')),
-                          PopupMenuItem(value: 'delete', child: Text('删除')),
-                        ]
-                      : const [
-                          PopupMenuItem(value: 'report', child: Text('举报')),
-                          PopupMenuItem(value: 'block', child: Text('屏蔽作者')),
-                        ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.full ? null : _openPost,
-              child: SizedBox(
-                width: double.infinity,
-                child: Text(
-                  text(_post, 'body'),
-                  maxLines: widget.full ? null : 6,
-                  overflow: widget.full
-                      ? TextOverflow.visible
-                      : TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyLarge,
+                  PopupMenuButton<String>(
+                    tooltip: '帖子操作',
+                    onSelected: _act,
+                    itemBuilder: (_) => _own
+                        ? const [
+                            PopupMenuItem(value: 'edit', child: Text('编辑')),
+                            PopupMenuItem(value: 'delete', child: Text('删除')),
+                          ]
+                        : [
+                            const PopupMenuItem(
+                              value: 'report',
+                              child: Text('举报'),
+                            ),
+                            if (_anonymous)
+                              const PopupMenuItem(
+                                value: 'hide',
+                                child: Text('屏蔽这条帖子'),
+                              )
+                            else if (_author.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'block',
+                                child: Text('屏蔽作者'),
+                              ),
+                          ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.full || _resonanceOnly ? null : _openPost,
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    text(_post, 'body'),
+                    maxLines: widget.full || _resonanceOnly ? null : 6,
+                    overflow: widget.full || _resonanceOnly
+                        ? TextOverflow.visible
+                        : TextOverflow.ellipsis,
+                    style: widget.card
+                        ? theme.textTheme.bodyMedium
+                        : theme.textTheme.bodyLarge,
+                  ),
                 ),
               ),
-            ),
-            if (tags.isNotEmpty) ...[
-              const SizedBox(height: 10),
+              if (tags.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: tags.map((tag) => _MoodLabel(tag)).toList(),
+                ),
+              ],
               Wrap(
                 spacing: 8,
-                runSpacing: 6,
-                children: tags.map((tag) => _MoodLabel(tag)).toList(),
+                children: [
+                  TextButton.icon(
+                    onPressed: _busy ? null : _react,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(44, 44),
+                      foregroundColor: active
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                    ),
+                    icon: Icon(
+                      active ? Icons.favorite : Icons.favorite_border,
+                      size: 20,
+                    ),
+                    label: Text(
+                      _resonanceOnly
+                          ? '我也是'
+                          : '共鸣 ${text(_post, 'resonances', '0')}',
+                    ),
+                  ),
+                  if (!_resonanceOnly)
+                    TextButton.icon(
+                      onPressed: widget.full ? null : _openPost,
+                      icon: const Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        size: 20,
+                      ),
+                      label: Text('${text(_post, 'comments', '0')} 条回应'),
+                    ),
+                ],
               ),
             ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: _busy ? null : _react,
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    foregroundColor: active
-                        ? colors.primary
-                        : colors.onSurfaceVariant,
-                  ),
-                  icon: Icon(
-                    active ? Icons.favorite : Icons.favorite_border,
-                    size: 20,
-                  ),
-                  label: Text('共鸣 ${text(_post, 'resonances', '0')}'),
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  onPressed: widget.full ? null : _openPost,
-                  icon: const Icon(Icons.chat_bubble_outline_rounded, size: 20),
-                  label: Text('评论 ${text(_post, 'comments', '0')}'),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -422,10 +516,18 @@ class _MoodLabel extends StatelessWidget {
 }
 
 class _PostEditor extends StatefulWidget {
-  const _PostEditor(this.api, this.user, {this.editing});
+  const _PostEditor(
+    this.api,
+    this.user, {
+    this.editing,
+    this.mode = 'anonymous',
+    this.initialTag,
+  });
   final HarborApi api;
   final Data user;
   final Data? editing;
+  final String mode;
+  final String? initialTag;
 
   @override
   State<_PostEditor> createState() => _PostEditorState();
@@ -439,8 +541,19 @@ class _PostEditorState extends State<_PostEditor> {
   bool _ready = false;
   Timer? _debounce;
   Future<void> _draftWrites = Future.value();
-  String get _draftKey => 'harbor.post.draft.${text(widget.user, 'id')}';
+  String get _draftKey =>
+      'harbor.post.draft.${text(widget.user, 'id')}${widget.mode == 'resonance' ? '.resonance' : ''}';
   bool get _new => widget.editing == null;
+  bool get _plaza => (widget.editing?['mode'] ?? widget.mode) == 'resonance';
+  int get _maxBody => _plaza ? 60 : 2000;
+  bool get _canSubmit {
+    final body = _body.text.trim();
+    return _ready &&
+        !_sending &&
+        body.isNotEmpty &&
+        body.runes.length <= _maxBody &&
+        (_plaza || _tags.isNotEmpty);
+  }
 
   @override
   void initState() {
@@ -465,6 +578,8 @@ class _PostEditorState extends State<_PostEditor> {
           _tags.addAll(
             (draft['tags'] as List?)?.whereType<String>() ?? const [],
           );
+        } else if (widget.initialTag case final tag?) {
+          _tags.add(tag);
         }
       } catch (_) {
         // Draft storage is optional on devices that block local storage.
@@ -496,11 +611,12 @@ class _PostEditorState extends State<_PostEditor> {
   }
 
   Future<void> _submit() async {
-    if (_sending || _body.text.trim().isEmpty || _tags.isEmpty) return;
+    if (!_canSubmit) return;
     setState(() => _sending = true);
     final payload = <String, dynamic>{
       'body': _body.text.trim(),
       'tags': _tags.toList(),
+      if (_new) 'mode': widget.mode,
     };
     try {
       final result = _new
@@ -541,10 +657,7 @@ class _PostEditorState extends State<_PostEditor> {
       title: Text(_new ? '写帖子' : '编辑帖子'),
       actions: [
         TextButton(
-          onPressed:
-              !_ready || _sending || _body.text.trim().isEmpty || _tags.isEmpty
-              ? null
-              : _submit,
+          onPressed: _canSubmit ? _submit : null,
           child: Text(
             _sending
                 ? '提交中…'
@@ -559,25 +672,37 @@ class _PostEditorState extends State<_PostEditor> {
         ? const Center(child: CircularProgressIndicator())
         : HarborList(
             children: [
+              if (_new) ...[
+                Text('匿名发布', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  '写下感受时，请留意文中是否包含姓名或联系方式。',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                const SizedBox(height: 12),
+              ],
               TextField(
                 controller: _body,
                 enabled: !_sending,
-                minLines: 8,
+                minLines: _plaza ? 4 : 8,
                 maxLines: 16,
-                maxLength: 2000,
+                maxLength: _maxBody,
                 style: Theme.of(context).textTheme.bodyLarge,
                 decoration: const InputDecoration(hintText: '把此刻的感受写下来'),
               ),
               const SizedBox(height: 16),
-              Text('选择情绪标签', style: Theme.of(context).textTheme.titleMedium),
+              Text('选择一个主题或情绪', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text('选择 1–3 项', style: Theme.of(context).textTheme.labelMedium),
+              Text(
+                _plaza ? '可选，最多 3 项' : '选择 1–3 项',
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final mood in _moods)
+                  for (final mood in {..._topics.skip(1), ..._moods})
                     FilterChip(
                       label: Text(mood),
                       selected: _tags.contains(mood),
@@ -630,11 +755,9 @@ class _PostDetailState extends State<PostDetail> {
   String get _path => '/posts/${widget.id}';
 
   Future<(Data, List<Data>)> _load() async {
-    final list = await Future.wait([
-      widget.api.request(_path),
-      widget.api.request('$_path/comments'),
-    ]);
-    return (list[0], objects(list[1]['items']));
+    final post = await widget.api.request(_path);
+    if (post['mode'] == 'resonance') return (post, <Data>[]);
+    return (post, await widget.api.list('$_path/comments'));
   }
 
   Future<void> _refresh() async {
@@ -703,17 +826,19 @@ class _PostDetailState extends State<PostDetail> {
   Widget _renderComment(Data comment, {bool nested = false}) {
     final theme = Theme.of(context);
     final name = text(comment, 'author_name', '同学');
-    final own = text(comment, 'author_id') == text(widget.user, 'id');
+    final author = text(comment, 'author_id');
+    final own =
+        comment['is_owner'] == true ||
+        (author.isNotEmpty && author == text(widget.user, 'id'));
+    void openAuthor() =>
+        open(context, _AuthorPage(widget.api, author, widget.user));
     return Padding(
       padding: EdgeInsets.fromLTRB(nested ? 36 : 20, 10, 12, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => open(
-              context,
-              _AuthorPage(widget.api, text(comment, 'author_id'), widget.user),
-            ),
+            onTap: author.isEmpty ? null : openAuthor,
             child: PersonIcon(
               name,
               url: text(comment, 'author_avatar'),
@@ -726,18 +851,14 @@ class _PostDetailState extends State<PostDetail> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 InkWell(
-                  onTap: () => open(
-                    context,
-                    _AuthorPage(
-                      widget.api,
-                      text(comment, 'author_id'),
-                      widget.user,
-                    ),
-                  ),
+                  onTap: author.isEmpty ? null : openAuthor,
                   child: Text(name, style: theme.textTheme.titleSmall),
                 ),
                 Text(
-                  stamp(comment['created_at'], date: true),
+                  [
+                    stamp(comment['created_at'], date: true),
+                    if (comment['review_pending'] == true) '待人工审核',
+                  ].join(' · '),
                   style: theme.textTheme.labelMedium,
                 ),
                 const SizedBox(height: 4),
@@ -790,6 +911,21 @@ class _PostDetailState extends State<PostDetail> {
         if (!snapshot.hasData)
           return const Center(child: CircularProgressIndicator());
         final (post, comments) = snapshot.data!;
+        if (post['mode'] == 'resonance') {
+          return HarborList(
+            refresh: _refresh,
+            children: [
+              _PostItem(
+                api: widget.api,
+                user: widget.user,
+                post: post,
+                onChange: _refresh,
+                full: true,
+                card: true,
+              ),
+            ],
+          );
+        }
         final roots = comments
             .where((c) => text(c, 'parent_id').isEmpty)
             .toList();

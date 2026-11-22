@@ -7,8 +7,32 @@ import 'package:flutter/services.dart';
 import '../shared/api.dart';
 import '../shared/design.dart';
 import 'community.dart' show reportContent;
+import 'student_surface.dart';
 
 String _scope(bool work) => work ? '?scope=work' : '';
+bool _interaction(Data item) =>
+    const {'chat_request', 'comment', 'resonance'}.contains(item['kind']);
+
+class StudentMessagesPage extends StatelessWidget {
+  const StudentMessagesPage(
+    this.api,
+    this.user, {
+    super.key,
+    required this.active,
+    required this.onNotice,
+    required this.onAi,
+  });
+
+  final HarborApi api;
+  final Data user;
+  final bool active;
+  final ValueChanged<Data> onNotice;
+  final VoidCallback onAi;
+
+  @override
+  Widget build(BuildContext context) =>
+      MessagesPage(api, user, active: active, onNotice: onNotice, onAi: onAi);
+}
 
 class MessagesPage extends StatefulWidget {
   const MessagesPage(
@@ -19,6 +43,7 @@ class MessagesPage extends StatefulWidget {
     this.active = true,
     this.onNotice,
     this.showRequests = false,
+    this.onAi,
   });
 
   final HarborApi api;
@@ -27,6 +52,7 @@ class MessagesPage extends StatefulWidget {
   final bool active;
   final void Function(Data notice)? onNotice;
   final bool showRequests;
+  final VoidCallback? onAi;
 
   @override
   State<MessagesPage> createState() => _MessagesPageState();
@@ -35,6 +61,7 @@ class MessagesPage extends StatefulWidget {
 class _MessagesPageState extends State<MessagesPage> {
   Future<(List<Data>, List<Data>, List<Data>)>? _items;
   bool _requestViewOpened = false;
+  bool _markingStudentInbox = false;
   Timer? _poll;
 
   @override
@@ -97,7 +124,7 @@ class _MessagesPageState extends State<MessagesPage> {
     if (mounted) _refresh();
   }
 
-  Future<void> _openNotices() async {
+  Future<void> _openNotices({bool? interactions}) async {
     await open(
       context,
       NoticesPage(
@@ -105,9 +132,97 @@ class _MessagesPageState extends State<MessagesPage> {
         widget.user,
         work: widget.work,
         onOpen: _openNotice,
+        title: interactions == true ? '互动消息' : null,
+        filter: interactions == null
+            ? null
+            : (item) => _interaction(item) == interactions,
+        onRequests: interactions == true ? _openRequests : null,
       ),
     );
     if (mounted) _refresh();
+  }
+
+  Future<void> _markStudentRead(
+    List<Data> notices,
+    List<Data> conversations,
+  ) async {
+    if (_markingStudentInbox) return;
+    setState(() => _markingStudentInbox = true);
+    try {
+      await Future.wait([
+        if (notices.any((item) => item['read'] != true))
+          widget.api.post('/notifications/read-all', {'scope': 'student'}),
+        for (final item in conversations.where(
+          (item) => _unreadMessages(item) > 0,
+        ))
+          widget.api.post('/conversations/${text(item, 'id')}/read'),
+      ]);
+    } catch (error) {
+      if (mounted) flash(context, error);
+    } finally {
+      if (mounted) {
+        setState(() => _markingStudentInbox = false);
+        await _refresh();
+      }
+    }
+  }
+
+  Future<void> _openConversation(Data conversation) async {
+    await open(
+      context,
+      ChatPage(widget.api, text(conversation, 'id'), user: widget.user),
+    );
+    if (mounted) await _refresh();
+  }
+
+  int _unreadMessages(Data item) => (item['unread'] as num? ?? 0).toInt();
+
+  Widget _studentConversation(Data conversation, {VoidCallback? onTap}) =>
+      StudentCard(
+        padding: EdgeInsets.zero,
+        child: _InboxRow(
+          avatar: PersonIcon(
+            text(conversation, 'name'),
+            url: text(conversation, 'avatar_url'),
+            radius: 21,
+          ),
+          title: text(conversation, 'name'),
+          subtitle: text(conversation, 'last_message', '打开会话'),
+          time: stamp(conversation['updated_at']),
+          count: _unreadMessages(conversation),
+          onTap: onTap ?? () => _openConversation(conversation),
+          compact: true,
+        ),
+      );
+
+  Future<void> _showPrivateMessages(List<Data> conversations) async {
+    final selected = await showModalBottomSheet<Data>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheet) => SafeArea(
+        top: false,
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheet).height * .55,
+          child: HarborList(
+            children: [
+              const StudentTabHeader('私信'),
+              const SizedBox(height: 12),
+              if (conversations.isEmpty)
+                const Empty('暂时没有私信', icon: Icons.person_outline_rounded),
+              for (final conversation in conversations) ...[
+                _studentConversation(
+                  conversation,
+                  onTap: () => Navigator.pop(sheet, conversation),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null && mounted) await _openConversation(selected);
   }
 
   void _openNotice(Data notice) {
@@ -151,6 +266,9 @@ class _MessagesPageState extends State<MessagesPage> {
         builder: (context, snapshot) {
           final (conversations, notices, requests) =
               snapshot.data ?? (<Data>[], <Data>[], <Data>[]);
+          if (widget.onAi != null) {
+            return _studentInbox(snapshot, conversations, notices);
+          }
           final unread = notices.where((item) => item['read'] != true).length;
           return Scaffold(
             appBar: AppBar(
@@ -176,6 +294,149 @@ class _MessagesPageState extends State<MessagesPage> {
           );
         },
       );
+
+  Widget _studentInbox(
+    AsyncSnapshot<(List<Data>, List<Data>, List<Data>)> snapshot,
+    List<Data> conversations,
+    List<Data> notices,
+  ) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final unreadNotices = notices.where((item) => item['read'] != true);
+    final unreadInteractions = unreadNotices.where(_interaction).length;
+    final unreadSystem = unreadNotices.length - unreadInteractions;
+    final unreadMessages = conversations.fold<int>(
+      0,
+      (sum, item) => sum + _unreadMessages(item),
+    );
+    final unread = unreadNotices.length + unreadMessages;
+    final categories = [
+      (
+        '系统通知',
+        Icons.campaign_outlined,
+        colors.primaryContainer,
+        unreadSystem,
+        () => _openNotices(interactions: false),
+      ),
+      (
+        '互动消息',
+        Icons.favorite_border_rounded,
+        dark ? colors.secondaryContainer : const Color(0xfffbf2e3),
+        unreadInteractions,
+        () => _openNotices(interactions: true),
+      ),
+      (
+        '私信',
+        Icons.person_outline_rounded,
+        dark ? colors.tertiaryContainer : const Color(0xffe9f0f5),
+        unreadMessages,
+        () => _showPrivateMessages(conversations),
+      ),
+    ];
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: HarborList(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          refresh: _refresh,
+          children: [
+            StudentTabHeader(
+              '消息',
+              subtitle: unread > 0 ? '$unread 条未读 · 慢慢回也没关系' : '在这里查看你的消息',
+              action: FilledButton.tonal(
+                onPressed: unread == 0 || _markingStudentInbox
+                    ? null
+                    : () => _markStudentRead(notices, conversations),
+                style: FilledButton.styleFrom(
+                  shape: const StadiumBorder(),
+                  minimumSize: const Size(0, 42),
+                ),
+                child: const Text('全部已读'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                for (final (index, (label, icon, tint, count, openCategory))
+                    in categories.indexed) ...[
+                  if (index > 0) const SizedBox(width: 9),
+                  Expanded(
+                    child: StudentCard(
+                      onTap: openCategory,
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _StudentMessageIcon(icon, tint),
+                          const SizedBox(height: 6),
+                          Text(
+                            label,
+                            style: theme.textTheme.labelLarge,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '$count 条未读',
+                            style: theme.textTheme.labelMedium,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 18),
+            Text('最近对话', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (snapshot.hasError && !snapshot.hasData)
+              LoadError(snapshot.error!, _refresh)
+            else if (!snapshot.hasData)
+              const Center(child: CircularProgressIndicator())
+            else if (conversations.isEmpty)
+              const StudentCard(
+                child: Empty('暂时没有会话', icon: Icons.chat_bubble_outline_rounded),
+              )
+            else
+              for (final item in conversations) ...[
+                _studentConversation(item),
+                const SizedBox(height: 8),
+              ],
+            const SizedBox(height: 10),
+            StudentCard(
+              color: colors.primaryContainer,
+              onTap: widget.onAi,
+              child: Row(
+                children: [
+                  _StudentMessageIcon(
+                    Icons.auto_awesome_outlined,
+                    colors.surface,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('想找人说说话？', style: theme.textTheme.titleMedium),
+                        Text(
+                          '小港一直在线，随时可以开始',
+                          style: theme.textTheme.labelMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: colors.primary),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _inbox(List<Data> conversations, List<Data> requests) {
     final requestsToReview = requests
@@ -260,6 +521,24 @@ class _InboxIcon extends StatelessWidget {
   }
 }
 
+class _StudentMessageIcon extends StatelessWidget {
+  const _StudentMessageIcon(this.icon, this.tint);
+
+  final IconData icon;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 34,
+    height: 34,
+    decoration: BoxDecoration(
+      color: tint,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Icon(icon, size: 19, color: Theme.of(context).colorScheme.primary),
+  );
+}
+
 class _InboxRow extends StatelessWidget {
   const _InboxRow({
     required this.avatar,
@@ -269,19 +548,24 @@ class _InboxRow extends StatelessWidget {
     this.tag = '',
     this.time = '',
     this.count = 0,
+    this.compact = false,
   });
 
   final Widget avatar;
   final String title, subtitle, tag, time;
   final VoidCallback onTap;
   final int count;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListTile(
-      minTileHeight: 80,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+      minTileHeight: compact ? 68 : 80,
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 12 : 20,
+        vertical: 5,
+      ),
       leading: avatar,
       title: Text(
         tag.isEmpty ? title : '$title · $tag',
@@ -304,7 +588,11 @@ class _InboxRow extends StatelessWidget {
                   Text(time, style: theme.textTheme.labelMedium),
                 if (count > 0) ...[
                   const SizedBox(height: 5),
-                  Badge(label: Text(count > 99 ? '99+' : '$count')),
+                  Badge(
+                    backgroundColor: compact ? theme.colorScheme.primary : null,
+                    textColor: compact ? theme.colorScheme.onPrimary : null,
+                    label: Text(count > 99 ? '99+' : '$count'),
+                  ),
                 ],
               ],
             ),
@@ -513,12 +801,18 @@ class NoticesPage extends StatefulWidget {
     super.key,
     this.work = false,
     required this.onOpen,
+    this.title,
+    this.filter,
+    this.onRequests,
   });
 
   final HarborApi api;
   final Data user;
   final bool work;
   final void Function(Data notice) onOpen;
+  final String? title;
+  final bool Function(Data)? filter;
+  final VoidCallback? onRequests;
 
   @override
   State<NoticesPage> createState() => _NoticesPageState();
@@ -529,8 +823,14 @@ class _NoticesPageState extends State<NoticesPage> {
   final _read = <String>{};
   bool _marking = false;
 
-  Future<List<Data>> _load() =>
-      widget.api.list('/notifications${_scope(widget.work)}');
+  Future<List<Data>> _load() async {
+    final notices = await widget.api.list(
+      '/notifications${_scope(widget.work)}',
+    );
+    return widget.filter == null
+        ? notices
+        : notices.where(widget.filter!).toList();
+  }
 
   Future<void> _refresh() async {
     final next = _load();
@@ -565,9 +865,17 @@ class _NoticesPageState extends State<NoticesPage> {
   Future<void> _readAll(List<Data> items) async {
     setState(() => _marking = true);
     try {
-      await widget.api.post('/notifications/read-all', {
-        'scope': widget.work ? 'work' : 'student',
-      });
+      if (widget.filter == null) {
+        await widget.api.post('/notifications/read-all', {
+          'scope': widget.work ? 'work' : 'student',
+        });
+      } else {
+        await Future.wait([
+          for (final item in items)
+            if (item['read'] != true && !_read.contains(text(item, 'id')))
+              widget.api.post('/notifications/${text(item, 'id')}/read'),
+        ]);
+      }
       if (!mounted) return;
       setState(() => _read.addAll(items.map((item) => text(item, 'id'))));
       await _refresh();
@@ -595,7 +903,7 @@ class _NoticesPageState extends State<NoticesPage> {
           item['read'] == true || _read.contains(text(item, 'id'));
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.work ? '工作通知' : '系统通知'),
+          title: Text(widget.title ?? (widget.work ? '工作通知' : '系统通知')),
           actions: [
             if (items.any((item) => !read(item)))
               TextButton(
@@ -612,6 +920,13 @@ class _NoticesPageState extends State<NoticesPage> {
                 padding: const EdgeInsets.only(bottom: 28),
                 refresh: _refresh,
                 children: [
+                  if (widget.onRequests case final action?)
+                    _InboxRow(
+                      avatar: const _InboxIcon(Icons.person_add_alt_outlined),
+                      title: '交流申请',
+                      subtitle: '查看收到与发出的申请',
+                      onTap: action,
+                    ),
                   if (items.isEmpty)
                     const Empty(
                       '暂时没有通知',
