@@ -53,7 +53,9 @@ PR 合并进 `main` 会触发 [iOS TestFlight 工作流](.github/workflows/testf
 
 Apple 团队 API Key 需要能为 `dev.oines.xlgw` 签名并上传。若使用 HTTP，构建会按后端主机生成对应的 iOS 网络例外。版本从 `apps/mobile/pubspec.yaml` 读取，构建号由 Actions 运行编号和尝试次数生成。
 
-本地可在 `apps/mobile` 运行 `flutter pub get --enforce-lockfile` 和 `flutter test --no-pub`，在仓库根目录运行 `actionlint` 校验工作流。发布失败时，在 GitHub Actions 查看失败步骤。可重跑失败的任务，也可在 Actions 的 iOS TestFlight 页面从 `main` 手动触发。
+本地可在 `apps/mobile` 运行 `flutter pub get --enforce-lockfile` 和 `flutter test --no-pub`。在仓库根目录运行 `actionlint` 校验工作流。若本地 actionlint 仍不识别 GitHub Actions 的 `queue` 字段，可用 `actionlint -ignore 'unexpected key "queue" for "concurrency" section'` 校验其余配置。
+
+发布失败时，在 GitHub Actions 查看失败步骤。可重跑失败的任务，也可在 Actions 的 iOS TestFlight 页面从 `main` 手动触发。
 
 ### 导出离线 Mock APK
 
